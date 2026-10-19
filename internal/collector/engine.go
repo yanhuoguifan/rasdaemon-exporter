@@ -16,6 +16,23 @@ func Run(ctx context.Context, cfg Config) (runErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	stateDir, err := prepareStateDir(cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	lock, err := AcquireLock(stateDir)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := lock.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("release collector lock: %w", err))
+		}
+	}()
 
 	db, err := openSQLite(ctx, cfg.DatabasePath)
 	if err != nil {

@@ -9,14 +9,21 @@ import (
 // DefaultDatabasePath is the rasdaemon database location on a standard host.
 const DefaultDatabasePath = "/var/lib/rasdaemon/ras-mc_event.db"
 
+// DefaultStateDir stores the exporter's lock and future durable state.
+const DefaultStateDir = "/var/lib/rasdaemon-exporter"
+
 // Config contains the source settings needed by the runtime bootstrap.
 type Config struct {
 	DatabasePath string
+	StateDir     string
 }
 
 // DefaultConfig returns settings for the standard rasdaemon installation.
 func DefaultConfig() Config {
-	return Config{DatabasePath: DefaultDatabasePath}
+	return Config{
+		DatabasePath: DefaultDatabasePath,
+		StateDir:     DefaultStateDir,
+	}
 }
 
 // Validate rejects ambiguous paths before any filesystem or database access.
@@ -26,6 +33,18 @@ func (c Config) Validate() error {
 	}
 	if !filepath.IsAbs(c.DatabasePath) {
 		return fmt.Errorf("database path must be absolute: %q", c.DatabasePath)
+	}
+	if c.StateDir == "" {
+		return errors.New("state directory must not be empty")
+	}
+	cleanStateDir := filepath.Clean(c.StateDir)
+	if !filepath.IsAbs(cleanStateDir) || cleanStateDir == string(filepath.Separator) {
+		return fmt.Errorf("state directory must be an absolute non-root path: %q", c.StateDir)
+	}
+	// Preparing state must never create a directory or lock at the source path.
+	source := filepath.Clean(c.DatabasePath)
+	if source == cleanStateDir || source == filepath.Join(cleanStateDir, "collector.lock") {
+		return errors.New("database path must differ from the state directory and lock file")
 	}
 	return nil
 }

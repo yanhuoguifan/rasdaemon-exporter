@@ -35,6 +35,18 @@ func TestSharedProductionFilesStayWithinCodeLineLimit(t *testing.T) {
 	}
 }
 
+func TestFilesHelperStaysWithinSixtyCodeLines(t *testing.T) {
+	path := filepath.Join(moduleRoot(t), "internal", "collector", "files.go")
+	count, err := countCodeLines(path)
+	if err != nil {
+		t.Fatalf("count shared file helper code lines: %v", err)
+	}
+	t.Logf("%s has %d code lines (limit 60)", path, count)
+	if count > 60 {
+		t.Errorf("%s has %d code lines; limit is 60", path, count)
+	}
+}
+
 func TestCountCodeLinesHandlesCommentsPunctuationAndRawStrings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "line-count.go")
 	source := "package sample\n" +

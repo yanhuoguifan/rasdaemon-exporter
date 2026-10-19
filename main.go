@@ -50,8 +50,10 @@ func parseConfig(args []string, stderr io.Writer) (collector.Config, error) {
 	flags.SetOutput(stderr)
 	flags.StringVar(&cfg.DatabasePath, "db", cfg.DatabasePath,
 		"absolute path to an existing rasdaemon SQLite database (read-only)")
+	flags.StringVar(&cfg.StateDir, "state-dir", cfg.StateDir,
+		"absolute path to the private collector state directory")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: rasdaemon-exporter [--db PATH]")
+		fmt.Fprintln(stderr, "Usage: rasdaemon-exporter [--db PATH] [--state-dir PATH]")
 		fmt.Fprintln(stderr, "Runtime bootstrap only; no event collectors are registered yet.")
 		flags.PrintDefaults()
 	}

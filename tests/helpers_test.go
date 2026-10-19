@@ -27,7 +27,10 @@ var (
 // validatedConfig builds the same validated input that the CLI passes to Run.
 func validatedConfig(t *testing.T, databasePath string) collector.Config {
 	t.Helper()
-	cfg := collector.Config{DatabasePath: databasePath}
+	cfg := collector.Config{
+		DatabasePath: databasePath,
+		StateDir:     filepath.Join(t.TempDir(), "state"),
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate test configuration: %v", err)
 	}

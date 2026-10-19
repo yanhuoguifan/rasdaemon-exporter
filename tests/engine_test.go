@@ -123,12 +123,153 @@ func TestRunReturnsCancellationAndDoesNotPublishFiles(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := collector.Run(ctx, validatedConfig(t, databasePath))
+	cfg := validatedConfig(t, databasePath)
+	err := collector.Run(ctx, cfg)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run() error = %v, want context.Canceled", err)
 	}
 	if got := directoryEntries(t, directory); !reflect.DeepEqual(got, entriesBefore) {
 		t.Fatalf("canceled startup created files: %v", got)
+	}
+	if _, err := os.Lstat(cfg.StateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("canceled startup created state directory: %v", err)
+	}
+}
+
+func TestRunCreatesStateDirectoryAndReleasesLockWithoutPublishingState(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "events.db")
+	createSQLite(t, databasePath, "CREATE TABLE unrelated (value TEXT)")
+	cfg := validatedConfig(t, databasePath)
+
+	err := collector.Run(context.Background(), cfg)
+	if !errors.Is(err, collector.ErrNoCollectors) {
+		t.Fatalf("Run() error = %v, want ErrNoCollectors", err)
+	}
+
+	info, err := os.Lstat(cfg.StateDir)
+	if err != nil {
+		t.Fatalf("stat prepared state directory: %v", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("state directory mode = %v; want directory mode 0700", info.Mode())
+	}
+	if got := directoryEntries(t, cfg.StateDir); !reflect.DeepEqual(got, []string{"collector.lock"}) {
+		t.Fatalf("Run() created unexpected state files: %v", got)
+	}
+	assertStateLockReleased(t, cfg.StateDir)
+}
+
+func TestRunAcquiresStateLockBeforeOpeningSQLite(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatalf("create synthetic state directory: %v", err)
+	}
+	lock, err := collector.AcquireLock(stateDir)
+	if err != nil {
+		t.Fatalf("hold state lock: %v", err)
+	}
+	t.Cleanup(func() { _ = lock.Close() })
+
+	databasePath := filepath.Join(t.TempDir(), "missing.db")
+	cfg := collector.Config{DatabasePath: databasePath, StateDir: stateDir}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate test configuration: %v", err)
+	}
+	err = collector.Run(context.Background(), cfg)
+	if !errors.Is(err, collector.ErrLocked) {
+		t.Fatalf("Run() error = %v, want ErrLocked before SQLite open", err)
+	}
+	if _, err := os.Lstat(databasePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("locked Run() unexpectedly touched missing SQLite path: %v", err)
+	}
+}
+
+func TestRunRejectsUnsafeExistingStateDirectoryWithoutChangingIt(t *testing.T) {
+	parent := t.TempDir()
+	target := filepath.Join(parent, "state-target")
+	if err := os.Mkdir(target, 0o750); err != nil {
+		t.Fatalf("create group-accessible state directory: %v", err)
+	}
+	link := filepath.Join(parent, "state-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatalf("create state-directory symlink: %v", err)
+	}
+	missingDatabase := filepath.Join(t.TempDir(), "missing.db")
+
+	for name, stateDir := range map[string]string{"group-accessible": target, "symlink": link} {
+		t.Run(name, func(t *testing.T) {
+			cfg := collector.Config{DatabasePath: missingDatabase, StateDir: stateDir}
+			if err := cfg.Validate(); err != nil {
+				t.Fatalf("validate test configuration: %v", err)
+			}
+			err := collector.Run(context.Background(), cfg)
+			if err == nil {
+				t.Fatal("Run() unexpectedly accepted unsafe state path")
+			}
+			if _, err := os.Lstat(missingDatabase); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Run() touched database after state-path failure: %v", err)
+			}
+		})
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatalf("stat original state directory: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o750 {
+		t.Fatalf("unsafe state directory mode changed to %04o; want unchanged 0750", got)
+	}
+	if got := directoryEntries(t, target); len(got) != 0 {
+		t.Fatalf("rejected state path created files: %v", got)
+	}
+}
+
+func TestRunReleasesLockAfterSourceErrors(t *testing.T) {
+	cases := []struct {
+		name string
+		make func(*testing.T) string
+	}{
+		{
+			name: "missing database",
+			make: func(t *testing.T) string { return filepath.Join(t.TempDir(), "missing.db") },
+		},
+		{
+			name: "invalid database",
+			make: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "invalid.db")
+				if err := os.WriteFile(path, []byte("not sqlite"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+		{
+			name: "no supported tables",
+			make: func(t *testing.T) string {
+				path := filepath.Join(t.TempDir(), "events.db")
+				createSQLite(t, path, "CREATE TABLE unrelated (value TEXT)")
+				return path
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validatedConfig(t, test.make(t))
+			if err := collector.Run(context.Background(), cfg); err == nil {
+				t.Fatal("Run() unexpectedly succeeded")
+			}
+			assertStateLockReleased(t, cfg.StateDir)
+		})
+	}
+}
+
+func assertStateLockReleased(t *testing.T, stateDir string) {
+	t.Helper()
+	lock, err := collector.AcquireLock(stateDir)
+	if err != nil {
+		t.Fatalf("state lock was not released after Run(): %v", err)
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatalf("release verification lock: %v", err)
 	}
 }
 

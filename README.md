@@ -2,7 +2,7 @@
 
 A small host-side Prometheus textfile producer for rasdaemon's SQLite event database. It reads incrementally, preserves approved source values, and publishes metrics through node_exporter without an HTTP listener.
 
-**Design in progress.** No initial release has been finalized. This directory is the home of the new standalone project and its current design. The new implementation has not yet been written. The earlier source, configuration, service example and SQL reference remain in the legacy workspace directory as references; they are not copied here or claimed to implement this design.
+**Design in progress.** No initial release has been finalized. This directory contains the new runtime bootstrap and its design; event collection and metric publication are not implemented yet. The earlier source, configuration, service example and SQL reference remain in the legacy workspace directory as references; they are not copied here or claimed to implement this design.
 
 ## Makefile commands
 
@@ -18,6 +18,38 @@ around Go tooling and currently provides only these targets:
 The build directory is ignored by Git. Build and clean reject a symlinked
 build directory. Use `GO=/path/to/go` to select the Go executable. There are no
 installation, dependency-upgrade or service-management targets.
+
+## Runtime paths
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--db PATH` | `/var/lib/rasdaemon/ras-mc_event.db` | Existing SQLite source, opened read-only |
+| `--state-dir PATH` | `/var/lib/rasdaemon-exporter` | Private directory for the single-instance lock and future collector state |
+
+Both paths must be absolute. The source path must differ from the state
+directory and its `collector.lock` file. The program creates the final state
+directory with mode `0700` if absent; its parent must already exist and be
+trusted. An existing directory must be owned by the running user, have mode
+`0700`, and not be a symbolic link. Existing permissions are never changed.
+
+```sh
+make build
+./build/rasdaemon-exporter --help
+./build/rasdaemon-exporter --db /absolute/path/to/test.db --state-dir /absolute/path/to/private-state
+```
+
+Use synthetic databases and a writable private state path during development.
+The default locations may require privileges; the program never elevates itself.
+Instances using the same state directory compete for `collector.lock` before
+opening SQLite. A second instance fails immediately while the lock is held.
+Normal return or process termination releases the kernel lock; the file remains
+and must not be deleted to force an unlock. Different state directories have
+independent locks, even when the database path is the same.
+
+The current bootstrap has no registered event collectors and returns an error
+after startup checks. It creates only the state directory and lock file, not
+`state.json` or a metrics file. The lock is released on this error path too;
+this is not yet a continuously running collection service.
 
 ## Current documentation
 

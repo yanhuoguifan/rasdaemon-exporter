@@ -1,12 +1,14 @@
 package collector_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"rasdaemon-exporter/internal/collector"
 )
@@ -16,7 +18,11 @@ func TestCLIHelpDoesNotNeedTheHostDatabase(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("--help exit code = %d; output:\n%s", code, output)
 	}
-	for _, expected := range []string{"--db", collector.DefaultDatabasePath, "no event collectors"} {
+	for _, expected := range []string{
+		"--db", collector.DefaultDatabasePath,
+		"--state-dir", collector.DefaultStateDir,
+		"no event collectors",
+	} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(expected)) {
 			t.Errorf("--help output does not contain %q:\n%s", expected, output)
 		}
@@ -32,6 +38,9 @@ func TestCLIConfigurationErrorsExitTwo(t *testing.T) {
 		{name: "positional argument", args: []string{"unexpected"}},
 		{name: "empty database path", args: []string{"--db="}},
 		{name: "relative database path", args: []string{"--db=relative.db"}},
+		{name: "empty state directory", args: []string{"--state-dir="}},
+		{name: "relative state directory", args: []string{"--state-dir=relative-state"}},
+		{name: "root state directory", args: []string{"--state-dir=/"}},
 	}
 
 	for _, test := range cases {
@@ -44,6 +53,42 @@ func TestCLIConfigurationErrorsExitTwo(t *testing.T) {
 				t.Fatal("CLI returned no diagnostic")
 			}
 		})
+	}
+}
+
+func TestCLIRejectsDatabasePathsThatOverlapState(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	for _, databasePath := range []string{
+		stateDir,
+		filepath.Join(stateDir, "collector.lock"),
+	} {
+		t.Run(filepath.Base(databasePath), func(t *testing.T) {
+			output, code := runCLI(t, "--state-dir", stateDir, "--db", databasePath)
+			if code != 2 {
+				t.Fatalf("CLI exit code = %d, want 2; output:\n%s", code, output)
+			}
+			if _, err := os.Lstat(stateDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid overlapping paths created state directory: %v", err)
+			}
+		})
+	}
+}
+
+func TestCLIRejectsRunWhileAnotherProcessHoldsStateLock(t *testing.T) {
+	stateDir := privateStateDirectory(t)
+	child := startLockChild(t, stateDir, "hold", 8*time.Second)
+	child.expectLine(t, "READY")
+	missingDatabase := filepath.Join(t.TempDir(), "missing.db")
+
+	output, code := runCLI(t, "--state-dir", stateDir, "--db", missingDatabase)
+	if code != 1 {
+		t.Fatalf("locked CLI exit code = %d; want 1; output:\n%s", code, output)
+	}
+	if !strings.Contains(strings.ToLower(output), "locked") {
+		t.Fatalf("locked CLI diagnostic missing; output:\n%s", output)
+	}
+	if _, err := os.Lstat(missingDatabase); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("locked CLI unexpectedly touched the missing database: %v", err)
 	}
 }
 
@@ -88,7 +133,10 @@ func TestCLISourceFailuresExitOne(t *testing.T) {
 
 func runCLI(t *testing.T, args ...string) (string, int) {
 	t.Helper()
-	command := exec.Command(buildCLI(t), args...)
+	// Isolate tests from the host default; later caller flags may override it.
+	stateDir := filepath.Join(t.TempDir(), "state")
+	commandArgs := append([]string{"--state-dir", stateDir}, args...)
+	command := exec.Command(buildCLI(t), commandArgs...)
 	command.Dir = t.TempDir()
 	output, err := command.CombinedOutput()
 	if err == nil {
