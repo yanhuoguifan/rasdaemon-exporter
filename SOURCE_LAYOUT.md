@@ -16,6 +16,8 @@ The workspace prototype is a reference for existing behavior, not the target sou
 
 ```text
 rasdaemon-exporter/
+├── Makefile
+├── .gitignore
 ├── main.go
 ├── go.mod
 ├── go.sum

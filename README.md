@@ -4,6 +4,21 @@ A small host-side Prometheus textfile producer for rasdaemon's SQLite event data
 
 **Design in progress.** No initial release has been finalized. This directory is the home of the new standalone project and its current design. The new implementation has not yet been written. The earlier source, configuration, service example and SQL reference remain in the legacy workspace directory as references; they are not copied here or claimed to implement this design.
 
+## Makefile commands
+
+Requires GNU Make, Go, CGO and a C compiler. The Makefile is a thin wrapper
+around Go tooling and currently provides only these targets:
+
+| Command | Behavior |
+| --- | --- |
+| `make build` | Build `build/rasdaemon-exporter` with CGO enabled |
+| `make test` | Run `go test ./...` with CGO enabled |
+| `make clean` | Remove only `build/rasdaemon-exporter`; keep unrelated files and Go caches |
+
+The build directory is ignored by Git. Build and clean reject a symlinked
+build directory. Use `GO=/path/to/go` to select the Go executable. There are no
+installation, dependency-upgrade or service-management targets.
+
 ## Current documentation
 
 There are **three authoritative design documents** and one acceptance document:
