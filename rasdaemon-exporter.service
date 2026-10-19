@@ -1,0 +1,17 @@
+[Unit]
+Description=RAS daemon event Prometheus exporter
+Wants=rasdaemon.service
+After=rasdaemon.service
+
+[Service]
+Type=exec
+User=root
+ExecStart=/usr/local/bin/rasdaemon-exporter
+StateDirectory=rasdaemon-exporter
+StateDirectoryMode=0700
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target

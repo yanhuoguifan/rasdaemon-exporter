@@ -2,7 +2,7 @@
 GO ?= go
 
 .DEFAULT_GOAL := build
-.PHONY: build clean test
+.PHONY: build clean test install
 
 build:
 	@test ! -L build || { echo "Refusing a symlinked build directory" >&2; exit 1; }
@@ -17,3 +17,8 @@ clean:
 
 test:
 	CGO_ENABLED=1 $(GO) test ./...
+
+install:
+	@test -x build/rasdaemon-exporter || { echo "Missing executable build/rasdaemon-exporter; run make build first" >&2; exit 1; }
+	install -Dm0755 build/rasdaemon-exporter /usr/local/bin/rasdaemon-exporter
+	install -Dm0644 rasdaemon-exporter.service /etc/systemd/system/rasdaemon-exporter.service
