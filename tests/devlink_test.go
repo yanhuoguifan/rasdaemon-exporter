@@ -27,6 +27,8 @@ const devlinkSchema = `CREATE TABLE devlink_event (
 	msg TEXT
 )`
 
+var _ collector.MetricCodec = (*collector.DevlinkCollector)(nil)
+
 type devlinkFixture struct {
 	id           int64
 	timestamp    string
@@ -166,7 +168,7 @@ func TestDevlinkCollectorAccumulatesCompleteRawLabelTuples(t *testing.T) {
 	}
 }
 
-func TestDevlinkCollectorPreservesUnvalidatedSourceStrings(t *testing.T) {
+func TestDevlinkCollectorPreservesSourceFieldsAndSanitizesInvalidMessage(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.db")
 	createDevlinkDatabase(t, path)
 	db := openDevlinkDatabase(t, path)
@@ -176,9 +178,9 @@ func TestDevlinkCollectorPreservesUnvalidatedSourceStrings(t *testing.T) {
 	control := "pci\x00\x01\x7f\n\r\t"
 	invalidUTF8 := string([]byte{0xc3, 0x28, 0xff})
 	want := map[collector.DevlinkLabels]uint64{
-		{BusName: long, DevName: long, DriverName: long, ReporterName: long, Msg: long}:                                    1,
-		{BusName: control, DevName: control, DriverName: control, ReporterName: control, Msg: control}:                     1,
-		{BusName: invalidUTF8, DevName: invalidUTF8, DriverName: invalidUTF8, ReporterName: invalidUTF8, Msg: invalidUTF8}: 1,
+		{BusName: long, DevName: long, DriverName: long, ReporterName: long, Msg: long}:                                              1,
+		{BusName: control, DevName: control, DriverName: control, ReporterName: control, Msg: control}:                               1,
+		{BusName: invalidUTF8, DevName: invalidUTF8, DriverName: invalidUTF8, ReporterName: invalidUTF8, Msg: "<invalid>(<invalid>"}: 1,
 	}
 	insertDevlinkEvents(t, path,
 		devlinkFixture{id: 1, busName: long, devName: long, driverName: long, reporterName: long, msg: long},
@@ -187,10 +189,231 @@ func TestDevlinkCollectorPreservesUnvalidatedSourceStrings(t *testing.T) {
 	)
 	rows, err := devlink.CollectBatch(context.Background(), db, 500)
 	if err != nil || rows != 3 {
-		t.Fatalf("collect raw source strings = (%d, %v), want (3, nil)", rows, err)
+		t.Fatalf("collect source strings = (%d, %v), want (3, nil)", rows, err)
 	}
 	if devlink.LastID != 3 || !reflect.DeepEqual(devlink.Counts, want) {
-		t.Fatalf("source strings were changed: cursor=%d counts=%v", devlink.LastID, devlink.Counts)
+		t.Fatalf("unexpected source fields or sanitized message: cursor=%d counts=%v", devlink.LastID, devlink.Counts)
+	}
+}
+
+func TestDevlinkCollectorSanitizesInvalidMessageRunsBeforeGrouping(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.db")
+	createDevlinkDatabase(t, path)
+	db := openDevlinkDatabase(t, path)
+	devlink := collector.DevlinkCollector{}
+
+	// Non-message fields pass through untouched, even when a source string
+	// contains invalid UTF-8 bytes.
+	busName := string([]byte{'p', 'c', 'i', 0xff})
+	deviceName := "  eth0  "
+	driverName := "driver\x00name"
+	reporterName := "tx\nrx"
+	message := "before <invalid> middle <invalid>( after"
+	firstMessage := append([]byte("before "), 0xff, 0xfe)
+	firstMessage = append(firstMessage, []byte(" middle ")...)
+	firstMessage = append(firstMessage, 0xc3, 0x28)
+	firstMessage = append(firstMessage, []byte(" after")...)
+	secondMessage := append([]byte("before "), 0xfd)
+	secondMessage = append(secondMessage, []byte(" middle ")...)
+	secondMessage = append(secondMessage, 0xff, 0x28)
+	secondMessage = append(secondMessage, []byte(" after")...)
+	insertDevlinkEvents(t, path,
+		devlinkFixture{id: 1, busName: busName, devName: deviceName, driverName: driverName,
+			reporterName: reporterName, msg: string(firstMessage)},
+		devlinkFixture{id: 2, busName: busName, devName: deviceName, driverName: driverName,
+			reporterName: reporterName, msg: string(secondMessage)},
+		devlinkFixture{id: 3, busName: busName, devName: deviceName, driverName: driverName,
+			reporterName: reporterName, msg: message},
+	)
+
+	rows, err := devlink.CollectBatch(context.Background(), db, 500)
+	if err != nil || rows != 3 {
+		t.Fatalf("collect messages with invalid UTF-8 = (%d, %v), want (3, nil)", rows, err)
+	}
+	wantLabels := collector.DevlinkLabels{
+		BusName: busName, DevName: deviceName, DriverName: driverName,
+		ReporterName: reporterName, Msg: message,
+	}
+	if devlink.LastID != 3 || !reflect.DeepEqual(devlink.Counts, map[collector.DevlinkLabels]uint64{wantLabels: 3}) {
+		t.Fatalf("collector = (%d, %v), want sanitized tuple count 3", devlink.LastID, devlink.Counts)
+	}
+}
+
+func TestCollectedDevlinkMessageRoundTripsSanitizedSnapshot(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "events.db")
+	rawMessage := append([]byte("before "), 0xff, 0xfe)
+	rawMessage = append(rawMessage, []byte(" after")...)
+	createDevlinkDatabase(t, databasePath,
+		devlinkFixture{
+			id: 1, busName: "pci", devName: "0000:01:00.0", driverName: "driver",
+			reporterName: "tx", msg: string(rawMessage),
+		},
+	)
+	db := openDevlinkDatabase(t, databasePath)
+	devlink := collector.DevlinkCollector{}
+	if rows, err := devlink.CollectBatch(context.Background(), db, 500); err != nil || rows != 1 {
+		t.Fatalf("collect sanitized event = (%d, %v), want (1, nil)", rows, err)
+	}
+
+	path := filepath.Join(t.TempDir(), "metrics.prom")
+	families := devlink.ExportMetrics()
+	if err := collector.SaveSnapshot(path, &collector.Snapshot{Generation: 1, Families: families}); err != nil {
+		t.Fatalf("save collected devlink snapshot: %v", err)
+	}
+	got, err := collector.LoadSnapshot(path)
+	if err != nil {
+		t.Fatalf("load collected devlink snapshot: %v", err)
+	}
+	if got.Generation != 1 {
+		t.Fatalf("snapshot generation = %d, want 1", got.Generation)
+	}
+	restored := collector.DevlinkCollector{LastID: 90, Counts: map[collector.DevlinkLabels]uint64{{Msg: "old"}: 2}}
+	if err := restored.RestoreMetrics(got.Families); err != nil {
+		t.Fatalf("restore devlink metric family: %v", err)
+	}
+	want := map[collector.DevlinkLabels]uint64{
+		{BusName: "pci", DevName: "0000:01:00.0", DriverName: "driver",
+			ReporterName: "tx", Msg: "before <invalid> after"}: 1,
+	}
+	if restored.LastID != 90 || !reflect.DeepEqual(restored.Counts, want) {
+		t.Fatalf("restored collector = (%d, %v), want unchanged cursor and counts %v", restored.LastID, restored.Counts, want)
+	}
+}
+
+func TestDevlinkMetricExportIsIndependentAndIncludesEmptyFamily(t *testing.T) {
+	devlink := collector.DevlinkCollector{}
+	empty := devlink.ExportMetrics()
+	if len(empty) != 1 || empty[0].Name != "rasdaemon_devlink_health_events_total" ||
+		empty[0].Help == "" || len(empty[0].Samples) != 0 {
+		t.Fatalf("empty devlink export = %#v, want one empty family", empty)
+	}
+
+	labels := collector.DevlinkLabels{BusName: "pci", DevName: "eth0", DriverName: "driver",
+		ReporterName: "tx", Msg: "timeout"}
+	devlink.Counts = map[collector.DevlinkLabels]uint64{labels: 4}
+	exported := devlink.ExportMetrics()
+	if len(exported) != 1 || len(exported[0].Samples) != 1 {
+		t.Fatalf("devlink export = %#v, want one sample", exported)
+	}
+	exported[0].Samples[0].Labels["msg"] = "changed"
+	exported[0].Samples[0].Value = 99
+	if devlink.Counts[labels] != 4 || len(devlink.Counts) != 1 {
+		t.Fatalf("mutating exported data changed collector counters: %v", devlink.Counts)
+	}
+}
+
+func TestEmptyDevlinkSnapshotRestoresEmptyCounts(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "metrics.prom")
+	devlink := collector.DevlinkCollector{LastID: 17}
+	if err := collector.SaveSnapshot(path, &collector.Snapshot{
+		Generation: 1,
+		Families:   devlink.ExportMetrics(),
+	}); err != nil {
+		t.Fatalf("save empty devlink snapshot: %v", err)
+	}
+
+	snapshot, err := collector.LoadSnapshot(path)
+	if err != nil {
+		t.Fatalf("load empty devlink snapshot: %v", err)
+	}
+	if snapshot.Generation != 1 || len(snapshot.Families) != 0 {
+		t.Fatalf("loaded empty devlink snapshot = %#v, want generation 1 without families", snapshot)
+	}
+
+	devlink.Counts = map[collector.DevlinkLabels]uint64{{Msg: "stale"}: 9}
+	if err := devlink.RestoreMetrics(snapshot.Families); err != nil {
+		t.Fatalf("restore empty devlink snapshot: %v", err)
+	}
+	if devlink.LastID != 17 || len(devlink.Counts) != 0 {
+		t.Fatalf("restored empty devlink snapshot = (%d, %v), want unchanged cursor and empty counts", devlink.LastID, devlink.Counts)
+	}
+}
+
+func TestDevlinkMetricRestoreValidatesBeforeReplacingCounts(t *testing.T) {
+	initial := collector.DevlinkLabels{Msg: "existing"}
+	collectorState := collector.DevlinkCollector{
+		LastID: 42,
+		Counts: map[collector.DevlinkLabels]uint64{initial: 7},
+	}
+	validLabels := map[string]string{
+		"bus_name": "pci", "dev_name": "eth0", "driver_name": "driver",
+		"reporter_name": "tx", "msg": "timeout",
+	}
+	valid := collector.CounterFamily{
+		Name:    "rasdaemon_devlink_health_events_total",
+		Help:    "Number of collected devlink event records.",
+		Samples: []collector.CounterSample{{Labels: validLabels, Value: 3}},
+	}
+	invalidFamilies := []struct {
+		name     string
+		families []collector.CounterFamily
+	}{
+		{name: "extra family", families: []collector.CounterFamily{valid, {Name: "unexpected"}}},
+		{name: "wrong family", families: []collector.CounterFamily{{Name: "unexpected", Help: valid.Help}}},
+		{name: "missing label", families: []collector.CounterFamily{{
+			Name: valid.Name, Help: valid.Help,
+			Samples: []collector.CounterSample{{Labels: map[string]string{"bus_name": "pci"}}},
+		}}},
+		{name: "extra label", families: []collector.CounterFamily{{
+			Name: valid.Name, Help: valid.Help,
+			Samples: []collector.CounterSample{{Labels: map[string]string{
+				"bus_name": "pci", "dev_name": "eth0", "driver_name": "driver",
+				"reporter_name": "tx", "msg": "timeout", "node": "host",
+			}}},
+		}}},
+	}
+	for _, test := range invalidFamilies {
+		name, families := test.name, test.families
+		t.Run(name, func(t *testing.T) {
+			before := maps.Clone(collectorState.Counts)
+			if err := collectorState.RestoreMetrics(families); err == nil {
+				t.Fatal("RestoreMetrics succeeded; want validation error")
+			}
+			if collectorState.LastID != 42 || !reflect.DeepEqual(collectorState.Counts, before) {
+				t.Fatalf("failed restore changed collector state: (%d, %v)", collectorState.LastID, collectorState.Counts)
+			}
+		})
+	}
+
+	tooMany := make([]collector.CounterSample, 10001)
+	for index := range tooMany {
+		labels := maps.Clone(validLabels)
+		labels["msg"] = strconv.Itoa(index)
+		tooMany[index] = collector.CounterSample{Labels: labels, Value: 1}
+	}
+	if err := collectorState.RestoreMetrics([]collector.CounterFamily{{Name: valid.Name, Help: valid.Help, Samples: tooMany}}); err == nil {
+		t.Fatal("RestoreMetrics accepted more than the series limit")
+	}
+	if collectorState.LastID != 42 || !reflect.DeepEqual(collectorState.Counts, map[collector.DevlinkLabels]uint64{initial: 7}) {
+		t.Fatal("series-limit error changed collector state")
+	}
+
+	changedHelp := valid
+	changedHelp.Help = "Updated description; it does not change this metric's identity."
+	if err := collectorState.RestoreMetrics([]collector.CounterFamily{changedHelp}); err != nil {
+		t.Fatalf("restore valid metric family: %v", err)
+	}
+	wantLabels := collector.DevlinkLabels{BusName: "pci", DevName: "eth0", DriverName: "driver",
+		ReporterName: "tx", Msg: "timeout"}
+	if collectorState.LastID != 42 || !reflect.DeepEqual(collectorState.Counts, map[collector.DevlinkLabels]uint64{wantLabels: 3}) {
+		t.Fatalf("successful restore = (%d, %v), want unchanged cursor and restored counts", collectorState.LastID, collectorState.Counts)
+	}
+	for name, families := range map[string][]collector.CounterFamily{
+		"nil families":   nil,
+		"empty families": {},
+	} {
+		if err := collectorState.RestoreMetrics(families); err != nil {
+			t.Fatalf("restore %s: %v", name, err)
+		}
+		if collectorState.LastID != 42 || len(collectorState.Counts) != 0 {
+			t.Fatalf("restoring %s = (%d, %v), want unchanged cursor and empty counts", name, collectorState.LastID, collectorState.Counts)
+		}
+	}
+	if err := collectorState.RestoreMetrics([]collector.CounterFamily{{Name: valid.Name}}); err != nil {
+		t.Fatalf("restore empty metric family: %v", err)
+	}
+	if collectorState.LastID != 42 || len(collectorState.Counts) != 0 {
+		t.Fatalf("restoring empty family = (%d, %v), want unchanged cursor and empty counts", collectorState.LastID, collectorState.Counts)
 	}
 }
 

@@ -59,8 +59,8 @@ func acquireFileLock(path string) (*os.File, error) {
 	return file, nil
 }
 
-// readRegularFile rejects symbolic links and special files, and bounds the read.
-// The caller supplies a nonnegative limit below MaxInt64 to allow one extra byte.
+// readRegularFile rejects symbolic links and special files. A nonnegative limit
+// bounds the read; a negative limit reads the complete file.
 func readRegularFile(path string, limit int64) ([]byte, error) {
 	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
@@ -74,11 +74,15 @@ func readRegularFile(path string, limit int64) ([]byte, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("path %q must be a regular file", path)
 	}
-	contents, err := io.ReadAll(io.LimitReader(file, limit+1))
+	var reader io.Reader = file
+	if limit >= 0 {
+		reader = io.LimitReader(file, limit+1)
+	}
+	contents, err := io.ReadAll(reader)
 	if err != nil {
 		return nil, fmt.Errorf("read file %q: %w", path, err)
 	}
-	if int64(len(contents)) > limit {
+	if limit >= 0 && int64(len(contents)) > limit {
 		return nil, fmt.Errorf("file %q exceeds %d bytes", path, limit)
 	}
 	return contents, nil

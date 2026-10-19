@@ -99,27 +99,65 @@ the source database, and do not clean up or truncate rasdaemon history. Check
 Do not replace or restore the source file while the collector is running; stop
 it first. The exporter does not monitor path replacement.
 
-Persist the active table set, one cursor per table, observed maximum IDs, and
-scheduling/health state in the exporter-owned state directory. Cumulative
-counter samples belong to the metrics snapshot, not the cursor state. Hold one
+Persist the source identity, snapshot generation, and one cursor per active
+table in the exporter-owned state directory. Cumulative counter samples belong
+to the metrics snapshot, not the cursor state. Hold one
 exclusive process lock for the lifetime of the collector. Protect state and
-output paths against unsafe symlink use and enforce configured size/series
-bounds.
+output paths against unsafe symlink use; enforce state-size and applicable
+per-table series bounds.
 
-Compare each observed table maximum with the last durably observed maximum. If it moves backwards, or a previously non-empty active table is observed empty, stop with a clear error and preserve the last valid state. This is a rollback detector, not a complete history auditor. The exporter deliberately does not hash anchor rows or reread consumed history: it will not detect old-row edits/deletions, and cannot detect every ID reuse (for example, reuse while the observed maximum remains higher). These violate the append-only input assumption and are not repaired automatically.
+Compare each observed table maximum with its consumed cursor. If the maximum is lower, stop with a clear error and preserve the last valid state. This is a rollback detector, not a complete history auditor. The exporter deliberately does not hash anchor rows or reread consumed history: it will not detect old-row edits/deletions, and cannot detect every ID reuse while the maximum remains at or above the cursor. These violate the append-only input assumption and are not repaired automatically.
 
 The exporter state may carry a format marker and integrity check so malformed or incompatible state is rejected. Do not build migration machinery or guarantee compatibility with state produced by earlier in-progress exporter implementations. Corrupt state, an unsupported current state format, disappearance of an enrolled table, or an ambiguous state/output combination is an explicit error; never silently reset counters or cursor progress. A newly appearing supported table remains pending as described above. An operator may explicitly reinitialize only after the old state and owned output have been safely backed up. Reinitialization starts fresh counters and cursors at zero; it does not migrate aggregates or modify the source database.
 
-Automatic first initialization is permitted only when both the exporter state and its owned output are absent, after acquiring the lock and passing source/configuration checks. A valid state with a missing output is recoverable by republishing from durable samples. An output without state is not a first install and must not be overwritten. If both files are removed, the process cannot distinguish a clean install from simultaneous loss; this ambiguity must be documented and must not be disguised as a continuity guarantee.
+Automatic first initialization is permitted only when both the exporter state and its owned output are absent, after acquiring the lock and passing source/configuration checks. A missing member of an existing state/output pair is an explicit error: the state does not contain the counters needed to recreate a missing snapshot. If both files are removed, the process cannot distinguish a clean install from simultaneous loss; this ambiguity must be documented and must not be disguised as a continuity guarantee.
+
+The text snapshot stores a positive generation in the comment
+`# rasdaemon-exporter generation=N` and cumulative counter families.
+This is not an additional exported metric. Snapshot load/save is independent
+of SQLite and state. In-memory counts remain `uint64`; text encoding and parsing
+use the Prometheus library's `float64` values directly. Exact snapshot restoration
+is guaranteed for counts from zero through `2^53`, inclusive. Saving larger
+counts fails before replacing the previous output; loading rejects parsed values
+that are non-finite, negative, fractional, or above `2^53`. Loading does not
+inspect raw decimal tokens for precision lost before the library returns a
+floating-point value, so this guarantee applies to exporter-produced snapshots.
+
+`Snapshot` contains generic `CounterFamily` and `CounterSample` data, not
+table-specific keys or live collectors. Each table implements `MetricCodec`
+to export independent label/count data and restore its own counts after
+semantic validation. Restoration constructs a temporary map and replaces the
+table's counts only on success, leaving its cursor unchanged. The snapshot
+layer sorts metric families by name and label names within each sample, while
+preserving the caller's sample order; it also owns text encoding/decoding and
+file operations. The generating caller guarantees unique family names and
+unique sample label sets within each family. Saving, loading, and table
+restoration do not repeat sample-uniqueness checks. Table modules own metric names and label meaning. This
+boundary does not require reflection, dynamic plugins, or automatic routing.
+
+Emit only families with samples. Empty families have no HELP/TYPE lines, and
+an empty snapshot consists only of its generation comment. Restoration of a
+known, enabled table treats its absent family as empty counts, without changing
+the cursor. The coordinating layer knows which tables are enabled and must
+reject unknown/unrouted families; missing or invalid snapshot files remain
+errors. The snapshot does not independently prove that an absent family had no
+events. Delegate HELP/TYPE syntax to the Prometheus library instead of scanning
+metadata or inserting temporary samples to preserve empty families.
 
 For each successful batch:
 
 1. Read and map bounded rows, then close the SQLite read transaction.
 2. Validate candidate counters and checkpoints.
-3. Durably write the complete state snapshot using a same-directory temporary file, `fsync`, atomic rename, and directory sync.
-4. Encode the committed samples and atomically replace the single `.prom` file using the same durable-file pattern.
+3. Encode candidate samples with the next generation and durably replace the `.prom` snapshot using a same-directory temporary file, `fsync`, atomic rename, and directory sync.
+4. Durably save the matching generation and cursors in `state.json` using the same durable-file pattern.
 
-State is committed before output. If output publication fails, retry publication from saved counters; do not recount the committed batch. If state commit fails, do not advance in-memory committed cursors or publish candidate counters. Errors are logged with a stable reason, table/path context, and recovery action; never log credentials or dump whole event records as a substitute for metrics.
+Output is published before state. Stop on publication or state-save failure;
+do not continue consuming rows. On restart, equal generations restore counters
+from the snapshot and cursors from state. A snapshot exactly one generation
+ahead requires rebuilding retained SQLite history using that pending generation;
+other mismatches are errors. This coordination and recovery are not performed by
+the standalone snapshot codec. Errors include table/path context and must not
+dump whole event records as a substitute for metrics.
 
 SQLite busy/locked errors and bounded query timeouts are retryable on a later poll. Keep event counters and cursors unchanged for the failed task, set its query health to failure, preserve its last-success time, and commit/publish that health update when state/output remain safe and writable. Missing required columns, unreadable source values, and ID rollback are fatal rather than endlessly retried compatibility cases. On a fatal error, publish failure health only if it can be done from trusted state without advancing events; then exit with a diagnostic. Corrupt state, unsafe paths or storage failures may prevent any update. The old textfile can therefore remain visible with stale success values: operators must also check last-success time and node_exporter textfile modification time. No health metric guarantees a final failure sample after a crash or write failure.
 
@@ -154,13 +192,14 @@ PCI and block-device names are display-only enrichment. Resolve the current loca
 
 For PCI lookup, use the fixed local command `/usr/bin/lspci -A linux-sysfs -D -vmm -s BDF` with an argument array, no shell or network access. Validate BDF only for lookup; never change the source label. Bound execution to one second and output to 64 KiB. Each resolver uses at most 256 cache entries, five-minute refresh eligibility, and at most one lookup per publication, with fair refresh scheduling. Block lookup reads `/sys/dev/block/major:minor` and explicitly related model attributes; it does not open block devices, issue ioctls or recursively guess through backing-device stacks. Names are optional and both lookup paths can be disabled. These limits are implementation defaults, not new per-table configuration frameworks.
 
-Keep resource budgets explicit: the starting business-series budget is 10,000,
-persisted state is bounded to 2 MiB and text output to 4 MiB. Per-value and
-label limits, where applicable, are defined in METRICS.md; the devlink collector
-preserves scanned source strings without per-value length or encoding checks.
-Budget exhaustion is reported rather than silently dropping records. Full
-raw-text retention, particularly DEVLINK messages, can reach the series budget
-even when the source database is small.
+Keep resource budgets explicit: persisted state is bounded to 2 MiB. The
+devlink collector has a table-local 10,000-series limit. Per-value and label
+limits, where applicable, are defined in METRICS.md; the devlink collector
+preserves its four identity fields as scanned and replaces invalid UTF-8 runs
+only in `msg` with `<invalid>` before grouping. It does not impose per-value
+length or control-character checks. Budget exhaustion is reported rather than
+silently dropping records. Dynamic DEVLINK messages can reach the table-local
+series limit even when the source database is small.
 
 ## Decisions still open
 

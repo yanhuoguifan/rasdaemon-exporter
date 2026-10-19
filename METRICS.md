@@ -50,6 +50,13 @@ in the source database is not represented by invented zero or failure samples.
 
 ## Shared counter semantics
 
+In-memory counts use `uint64`. Snapshots use the Prometheus library's floating-
+point representation and support exact integer counts through `2^53`, inclusive.
+Larger in-memory counts cannot be published and cause an error instead of being
+silently rounded. Snapshot loading checks the parsed floating-point value for
+this range and integrality; externally modified decimal text may already have
+been rounded by the parser.
+
 - Each table has one ID cursor. All retained rows are counted through the same
   path, whether they were present at startup or appended later; there is no
   baseline/live split or `scope` label. Counter values are cumulative across
@@ -166,13 +173,16 @@ replaceable part.
 
 ### Devlink reports: `devlink_event`
 
-All five labels (`bus_name`, `dev_name`, `driver_name`, `reporter_name`, and
-`msg`) preserve their SQLite text values. Empty and NULL values remain empty;
-whitespace, newlines, addresses, queue identifiers, and other dynamic message
-values are not normalized or filtered. No per-value length, UTF-8, or
-control-character validation is applied. The accepted trade-off is that
-distinct messages can create distinct series; series-count and output-size
-limits remain enforced.
+The four identity labels (`bus_name`, `dev_name`, `driver_name`, and
+`reporter_name`) preserve their SQLite text values. Empty and NULL values remain
+empty. For `msg`, empty and NULL values remain empty, and valid text—including
+whitespace, newlines, addresses, queue identifiers, and other dynamic values—is
+preserved. Each run of invalid UTF-8 bytes in `msg` is replaced with the literal
+`<invalid>` before grouping; the remaining message text is preserved. The
+metrics layer does not sanitize source labels. The accepted trade-off is that
+distinct messages can create distinct series. The devlink collector applies a
+per-table series limit; the snapshot codec has no global series or file-size
+limit.
 
 Rows can originate from devlink health reports or a network transmit timeout.
 `dev_name` can therefore be a bus device name or a network interface, and the
@@ -309,9 +319,10 @@ text labels, the five MCE description labels, ARM `error_type`/`error_flags`,
 and EXTLOG/non-standard `fru_text`. Ordinary identifiers retain the 128-byte
 budget. Auxiliary device names/models have a 512-byte budget and use `unknown`
 on lookup failure or over-budget helper output. These are input limits, not
-permission to normalize unknown source values. Runtime resource limits also
-bound total series and output size; exceeding a business-data budget is an
-explicit error, not a silently skipped event.
+permission to normalize unknown source values. Table-specific collector limits
+apply where documented; the snapshot codec does not impose a global series or
+output-size cap. Exceeding an applicable business-data budget is an explicit
+error, not a silently skipped event.
 
 ## Source evidence
 

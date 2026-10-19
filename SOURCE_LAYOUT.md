@@ -60,7 +60,7 @@ rasdaemon-exporter/
     ├── sqlite.go
     ├── state.go
     ├── files.go
-    ├── prometheus.go
+    ├── metrics.go
     ├── device_name.go
     ├── table_mc_event.go
     ├── table_aer_event.go
@@ -92,7 +92,7 @@ Each of the 12 table modules owns that table's explicit named SQL projection, ro
 | `table_mce_record.go` | Machine Check records without collector-side MCA decoding. |
 | `table_arm_event.go` | ARM processor error records using the approved SQLite values. |
 | `table_extlog_event.go` | Firmware extended-log memory reports; one increment per row. |
-| `table_devlink_event.go` | Devlink health and network transmit-timeout reports; preserve approved source text. |
+| `table_devlink_event.go` | Devlink queries and counters, approved message handling, metric definitions, and label/count export and restoration through `MetricCodec`. |
 | `table_disk_errors.go` | Block I/O error reports and their approved current-device display enrichment input. |
 | `table_non_standard_event.go` | Generic firmware sections; do not decode the binary payload. |
 | `table_hip08_oem_type1_event_v2.go` | HIP08 OEM type 1 records. |
@@ -117,7 +117,7 @@ Shared code is intentionally small and limited to mechanics used across tables.
 | `sqlite.go` | Open the source read-only, apply bounded query safeguards, and run compiled named projections. |
 | `state.go` | Own state structures, JSON encoding/decoding, validation, generation/cursor transitions, identity checks and state load/save orchestration. |
 | `files.go` | Provide private-directory preparation, locking a caller-supplied path, bounded regular-file reading and atomic byte-file replacement. No state structures, JSON rules or fixed state filenames. |
-| `prometheus.go` | Escape and deterministically encode the text format and enforce configured series/output bounds. |
+| `metrics.go` | Own generic snapshot/family/sample data and `MetricCodec`, Prometheus text encoding/decoding and snapshot load/save; sort family and label names but preserve caller sample order; use library float values with the inclusive `2^53` exact-count bound, without table-specific branches. |
 | `device_name.go` | Perform optional bounded local device-name/model lookups outside counter identity and cursor logic. |
 
 Responsibility and cohesion take priority over file length. Keep all state semantics in `state.go`, rather than splitting its model, codec, persistence orchestration and transitions solely to meet a line quota. Keep generic filesystem mechanics in `files.go`; these helpers receive paths and bytes, not state objects. Line counts are review information, not a hard pass/fail limit. Do not compress statements, abbreviate names, omit useful comments or add one-function wrapper files to reduce a count.
@@ -131,7 +131,7 @@ main.go → config.go → engine.go
                        ├─ table module → sqlite.go
                        ├─ state.go → files.go
                        ├─ device_name.go (optional enrichment)
-                       └─ prometheus.go → textfile output
+                       └─ metrics.go → textfile snapshot
 ```
 
 `DESIGN.md` owns startup, state, cursor, database replacement, failure, bounds, and durability rules. This file only establishes source-module responsibilities. SQL text and selected field semantics are owned by each table module and documented centrally in `METRICS.md`; do not add SQL snippets or a second metrics inventory here.

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 )
 
 // DevlinkLabels preserves the five source fields used to group devlink events.
@@ -33,7 +34,86 @@ type devlinkBatch struct {
 
 const (
 	devlinkMaxSeries = 10000
+
+	devlinkMetricName = "rasdaemon_devlink_health_events_total"
+	devlinkMetricHelp = "Number of collected devlink event records."
 )
+
+// ExportMetrics returns the devlink counters as an independent metric family.
+// Metric formatting and file persistence belong to the shared snapshot layer.
+func (c *DevlinkCollector) ExportMetrics() []CounterFamily {
+	samples := make([]CounterSample, 0, len(c.Counts))
+	for labels, value := range c.Counts {
+		samples = append(samples, CounterSample{
+			Labels: map[string]string{
+				"bus_name":      labels.BusName,
+				"dev_name":      labels.DevName,
+				"driver_name":   labels.DriverName,
+				"reporter_name": labels.ReporterName,
+				"msg":           labels.Msg,
+			},
+			Value: value,
+		})
+	}
+	return []CounterFamily{{Name: devlinkMetricName, Help: devlinkMetricHelp, Samples: samples}}
+}
+
+// RestoreMetrics replaces the devlink counters after validating the complete
+// family. It leaves the collection cursor unchanged on both success and error.
+// For a known, enabled table, no family means no samples: clear Counts.
+// The caller handles missing files, routes only this table's families here,
+// and ensures sample label sets are unique.
+func (c *DevlinkCollector) RestoreMetrics(families []CounterFamily) error {
+	if len(families) == 0 {
+		c.Counts = make(map[DevlinkLabels]uint64)
+		return nil
+	}
+	if len(families) != 1 {
+		return errors.New("snapshot must contain exactly one devlink metric family")
+	}
+	family := families[0]
+	if family.Name != devlinkMetricName {
+		return errors.New("snapshot contains an unexpected devlink metric family")
+	}
+	if len(family.Samples) > devlinkMaxSeries {
+		return fmt.Errorf("devlink series limit %d exceeded", devlinkMaxSeries)
+	}
+
+	counts := make(map[DevlinkLabels]uint64, len(family.Samples))
+	for _, sample := range family.Samples {
+		labels, err := devlinkLabelsFromMap(sample.Labels)
+		if err != nil {
+			return err
+		}
+		counts[labels] = sample.Value
+	}
+	c.Counts = counts
+	return nil
+}
+
+func devlinkLabelsFromMap(values map[string]string) (DevlinkLabels, error) {
+	if len(values) != 5 {
+		return DevlinkLabels{}, errors.New("devlink metric must contain exactly five source labels")
+	}
+	var labels DevlinkLabels
+	var ok bool
+	if labels.BusName, ok = values["bus_name"]; !ok {
+		return DevlinkLabels{}, errors.New("devlink metric is missing bus_name label")
+	}
+	if labels.DevName, ok = values["dev_name"]; !ok {
+		return DevlinkLabels{}, errors.New("devlink metric is missing dev_name label")
+	}
+	if labels.DriverName, ok = values["driver_name"]; !ok {
+		return DevlinkLabels{}, errors.New("devlink metric is missing driver_name label")
+	}
+	if labels.ReporterName, ok = values["reporter_name"]; !ok {
+		return DevlinkLabels{}, errors.New("devlink metric is missing reporter_name label")
+	}
+	if labels.Msg, ok = values["msg"]; !ok {
+		return DevlinkLabels{}, errors.New("devlink metric is missing msg label")
+	}
+	return labels, nil
+}
 
 // CollectBatch reads one bounded batch and applies it only after the complete
 // read and counter checks succeed. Limit must be positive.
@@ -116,7 +196,7 @@ func readDevlinkBatch(ctx context.Context, db *sql.DB, afterID int64, limit int)
 			DevName:      devName.String,
 			DriverName:   driverName.String,
 			ReporterName: reporterName.String,
-			Msg:          msg.String,
+			Msg:          strings.ToValidUTF8(msg.String, "<invalid>"),
 		}
 		batch.counts[labels]++
 		batch.rows++
