@@ -16,30 +16,31 @@ compatibility adapters or schema-version matrix.
 ## Metric inventory
 
 There are 18 metric families: 12 hardware counters and six gauges. Label names
-are exact; `node` and `scope` are common to hardware counters, while Prometheus
-adds `job` and `instance` during scraping. Label order in exposition is not
-semantically significant.
+are exact. The exporter emits event-derived labels but does not add host identity
+or collection-lane labels. Configure Prometheus scraping to add a stable `node`
+label; Prometheus also adds `job` and `instance`. Label order in exposition is
+not semantically significant.
 
 | Metric family | Type | SQLite source | Labels written by the exporter | Increment or value |
 |---|---|---|---|---|
-| `rasdaemon_memory_errors_total` | Counter | `mc_event` | `node, scope, error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | Add the row's `err_count` |
-| `rasdaemon_memory_events_total` | Counter | `mc_event` | `node, scope, error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | Add one per row |
-| `rasdaemon_pcie_aer_events_total` | Counter | `aer_event` | `node, scope, dev_name, err_type, err_msg, device_name` | Add one per row |
-| `rasdaemon_mce_events_total` | Counter | `mce_record` | `node, scope, cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | Add one per row |
-| `rasdaemon_arm_processor_events_total` | Counter | `arm_event` | `node, scope, mpidr, affinity, error_type, error_flags, running_state, psci_state` | Add one per row |
-| `rasdaemon_firmware_memory_events_total` | Counter | `extlog_event` | `node, scope, etype, severity, fru_id, fru_text` | Add one per row; do not add `error_count` |
-| `rasdaemon_devlink_health_events_total` | Counter | `devlink_event` | `node, scope, bus_name, dev_name, driver_name, reporter_name, msg` | Add one per row |
-| `rasdaemon_block_io_error_events_total` | Counter | `disk_errors` | `node, scope, dev, error, rwbs, device_name, device_model` | Add one per row |
-| `rasdaemon_firmware_section_events_total` | Counter | `non_standard_event` | `node, scope, sec_type, fru_id, fru_text, severity` | Add one per row |
-| `rasdaemon_hisi_oem_events_total` | Counter | `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2` | `node, scope, record_type, version, soc_id, socket_id, nimbus_id, module_id, sub_module_id, err_severity` | Add one per row; `record_type` is `type1` or `type2` according to the source table |
-| `rasdaemon_hisi_pcie_local_events_total` | Counter | `hip08_pcie_local_event_v2` | `node, scope, version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | Add one per row |
-| `rasdaemon_hisi_common_events_total` | Counter | `hisi_common_section_v2` | `node, scope, version, soc_id, socket_id, totem_id, nimbus_id, sub_system_id, module_id, sub_module_id, core_id, port_id, err_type, pcie_info, err_severity` | Add one per row |
-| `rasdaemon_query_duration_seconds` | Gauge | Collector state, per tracked table | `node, table` | Duration of the most recent table polling attempt, in seconds |
-| `rasdaemon_query_success` | Gauge | Collector state, per tracked table | `node, table` | `1` after a successful table poll; `0` after a failed or not-yet-successful poll |
-| `rasdaemon_query_last_success_timestamp_seconds` | Gauge | Collector state, per tracked table | `node, table` | Unix timestamp of the last successful table poll; `0` if none has succeeded |
-| `rasdaemon_database_size_bytes` | Gauge | Filesystem stat of the SQLite database file | `node` | Logical file size in bytes |
-| `rasdaemon_series_count` | Gauge | Final business sample set prepared for textfile publication | `node` | Number of distinct hardware counter series in that output snapshot; excludes collector gauges |
-| `rasdaemon_backlog_records_lower_bound` | Gauge | Bounded query after a table's live cursor | `node, table` | Exact count from 0 through 1000; `1001` means at least 1001 pending rows |
+| `rasdaemon_memory_errors_total` | Counter | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | Add the row's `err_count` |
+| `rasdaemon_memory_events_total` | Counter | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | Add one per row |
+| `rasdaemon_pcie_aer_events_total` | Counter | `aer_event` | `dev_name, err_type, err_msg, device_name` | Add one per row |
+| `rasdaemon_mce_events_total` | Counter | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | Add one per row |
+| `rasdaemon_arm_processor_events_total` | Counter | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | Add one per row |
+| `rasdaemon_firmware_memory_events_total` | Counter | `extlog_event` | `etype, severity, fru_id, fru_text` | Add one per row; do not add `error_count` |
+| `rasdaemon_devlink_health_events_total` | Counter | `devlink_event` | `bus_name, dev_name, driver_name, reporter_name, msg` | Add one per row |
+| `rasdaemon_block_io_error_events_total` | Counter | `disk_errors` | `dev, error, rwbs, device_name, device_model` | Add one per row |
+| `rasdaemon_firmware_section_events_total` | Counter | `non_standard_event` | `sec_type, fru_id, fru_text, severity` | Add one per row |
+| `rasdaemon_hisi_oem_events_total` | Counter | `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2` | `record_type, version, soc_id, socket_id, nimbus_id, module_id, sub_module_id, err_severity` | Add one per row; `record_type` is `type1` or `type2` according to the source table |
+| `rasdaemon_hisi_pcie_local_events_total` | Counter | `hip08_pcie_local_event_v2` | `version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | Add one per row |
+| `rasdaemon_hisi_common_events_total` | Counter | `hisi_common_section_v2` | `version, soc_id, socket_id, totem_id, nimbus_id, sub_system_id, module_id, sub_module_id, core_id, port_id, err_type, pcie_info, err_severity` | Add one per row |
+| `rasdaemon_query_duration_seconds` | Gauge | Collector state, per tracked table | `table` | Duration of the most recent table polling attempt, in seconds |
+| `rasdaemon_query_success` | Gauge | Collector state, per tracked table | `table` | `1` after a successful table poll; `0` after a failed or not-yet-successful poll |
+| `rasdaemon_query_last_success_timestamp_seconds` | Gauge | Collector state, per tracked table | `table` | Unix timestamp of the last successful table poll; `0` if none has succeeded |
+| `rasdaemon_database_size_bytes` | Gauge | Filesystem stat of the SQLite database file | None | Logical file size in bytes |
+| `rasdaemon_series_count` | Gauge | Final business sample set prepared for textfile publication | None | Number of distinct hardware counter series in that output snapshot; excludes collector gauges |
+| `rasdaemon_backlog_records_lower_bound` | Gauge | Bounded query after a table's cursor | `table` | Exact count from 0 through 1000; `1001` means at least 1001 pending rows |
 
 The exporter emits HELP and TYPE metadata for its metric families. A metadata
 line does not create a sample. It does not pre-create zero-valued hardware
@@ -49,10 +50,10 @@ in the source database is not represented by invented zero or failure samples.
 
 ## Shared counter semantics
 
-- `scope="baseline"` identifies rows that existed at the per-table initialization
-  boundary. `scope="live"` identifies rows after that boundary. Use `live` for
-  post-initialization growth; sum both scopes for the collected cumulative
-  history. An unfinished baseline import is not a real-time event stream.
+- Each table has one ID cursor. All retained rows are counted through the same
+  path, whether they were present at startup or appended later; there is no
+  baseline/live split or `scope` label. Counter values are cumulative across
+  successfully consumed rows.
 - These are counts of rasdaemon database reports, not lifetime hardware
   counters. A row can represent a report containing multiple lower-level error
   indications. Unless stated otherwise, each row contributes exactly one.
@@ -168,8 +169,9 @@ replaceable part.
 All five labels (`bus_name`, `dev_name`, `driver_name`, `reporter_name`, and
 `msg`) preserve their SQLite text values. Empty and NULL values remain empty;
 whitespace, newlines, addresses, queue identifiers, and other dynamic message
-values are not normalized or filtered. The accepted trade-off is that distinct
-messages can create distinct series; the configured series and output-size
+values are not normalized or filtered. No per-value length, UTF-8, or
+control-character validation is applied. The accepted trade-off is that
+distinct messages can create distinct series; series-count and output-size
 limits remain enforced.
 
 Rows can originate from devlink health reports or a network transmit timeout.
@@ -241,8 +243,10 @@ exported. Vendor-decoded rows can describe a section also present in
 ## Collector gauges
 
 Where present, the `table` label is the SQLite table name. Per-table gauges
-describe enrolled tables, not hypothetical tables that are absent. Database
-size and business-series count each have only the `node` label.
+describe enrolled tables, not hypothetical tables that are absent. The exporter
+does not emit a `node` label; Prometheus scrape configuration supplies the host
+identity uniformly. Database size and business-series count have no exporter-
+emitted labels.
 
 - `rasdaemon_query_duration_seconds` is the duration of the most recent
   scheduled poll of that table, in seconds. It covers table query/scan and
@@ -259,8 +263,9 @@ size and business-series count each have only the `node` label.
   measurement of the containing filesystem's free space.
 - `rasdaemon_series_count` counts distinct hardware counter samples in the
   final output snapshot. Identity is the metric name plus its complete exported
-  label set, including `scope` and any display-only device labels. Baseline and
-  live samples count separately; the two MC metric families count separately.
+  label set, including any display-only device labels. Rows from startup history
+  and later additions with the same labels contribute to the same counter; the
+  two MC metric families count separately.
   Count a present zero-valued business sample, but not HELP/TYPE lines, unseen
   combinations, collector gauges, or this gauge itself. An output with no
   business samples reports zero. Compute the value from the existing output
@@ -271,8 +276,8 @@ size and business-series count each have only the `node` label.
   historical series retained by Prometheus. Display-label churn can increase
   historical Prometheus cardinality without increasing this snapshot count.
   No textfile-size metric is included in this design.
-- `rasdaemon_backlog_records_lower_bound` is measured after the table's live
-  cursor with a query bounded at 1001 rows. Values 0–1000 are exact for that
+- `rasdaemon_backlog_records_lower_bound` is measured after the table's cursor
+  with a query bounded at 1001 rows. Values 0–1000 are exact for that
   query snapshot; 1001 means at least 1001. It is not `MAX(id) - cursor`, an
   event age, or a total derived from ID gaps. Emit it only when the probe
   succeeds; absence is not zero.
@@ -292,20 +297,21 @@ handling is defined in DESIGN.md.
 ## Input and label bounds
 
 Prometheus escaping preserves the decoded value; do not silently truncate input.
-Source text must be valid UTF-8. The approved raw-text policy permits LF, CR and
-TAB but rejects unsupported control characters. Missing required columns are SQL
-errors, not NULL values. A non-NULL GUID must be a 16-byte BLOB; NULL maps to an
-empty label. Integer source labels preserve SQLite integer values in decimal
-except for the explicitly documented MC/ARM location conventions.
+Except for DEVLINK fields described above, source text must be valid UTF-8. The
+approved raw-text policy permits LF, CR and TAB but rejects unsupported control
+characters. Missing required columns are SQL errors, not NULL values. A non-NULL
+GUID must be a 16-byte BLOB; NULL maps to an empty label. Integer source labels
+preserve SQLite integer values in decimal except for the explicitly documented
+MC/ARM location conventions.
 
 The raw-text budget is 4096 bytes for MC `dimm`/`err_msg`, AER's three source
 text labels, the five MCE description labels, ARM `error_type`/`error_flags`,
-EXTLOG/non-standard `fru_text`, and DEVLINK `msg`. Ordinary identifiers retain
-the 128-byte budget. Auxiliary device names/models have a 512-byte budget and
-use `unknown` on lookup failure or over-budget helper output. These are input
-limits, not permission to normalize unknown source values. Runtime resource
-limits also bound total series and output size; exceeding a business-data
-budget is an explicit error, not a silently skipped event.
+and EXTLOG/non-standard `fru_text`. Ordinary identifiers retain the 128-byte
+budget. Auxiliary device names/models have a 512-byte budget and use `unknown`
+on lookup failure or over-budget helper output. These are input limits, not
+permission to normalize unknown source values. Runtime resource limits also
+bound total series and output size; exceeding a business-data budget is an
+explicit error, not a silently skipped event.
 
 ## Source evidence
 
@@ -326,8 +332,8 @@ Runtime behavior is defined in [DESIGN.md](DESIGN.md), source organization in
 
 - `increase()` and `rate()` need samples over time. A newly seen series can
   begin with a positive value and may not yield a useful first-window increase.
-- During backlog catch-up, `scope="live"` describes rows consumed by the
-  collector, not necessarily the physical event occurrence rate.
+- During startup or backlog catch-up, counter growth describes rows consumed by
+  the collector, not necessarily the physical event occurrence rate.
 - A successful poll proves the selected SQL and row handling completed; it
   does not prove every possible kernel or firmware event was emitted or stored.
 - This exporter summarizes rasdaemon's retained database rows. It is not an

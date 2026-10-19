@@ -2,7 +2,7 @@
 
 A small host-side Prometheus textfile producer for rasdaemon's SQLite event database. It reads incrementally, preserves approved source values, and publishes metrics through node_exporter without an HTTP listener.
 
-**Design in progress.** No initial release has been finalized. This directory contains the new runtime bootstrap and its design; event collection and metric publication are not implemented yet. The earlier source, configuration, service example and SQL reference remain in the legacy workspace directory as references; they are not copied here or claimed to implement this design.
+**Design in progress.** No initial release has been finalized. A memory-only devlink query and counting engine is available for testing. Durable collection and metric publication are not implemented yet. The earlier source, configuration, service example and SQL reference remain in the legacy workspace directory as references; they are not copied here or claimed to implement this design.
 
 ## Makefile commands
 
@@ -46,10 +46,33 @@ Normal return or process termination releases the kernel lock; the file remains
 and must not be deleted to force an unlock. Different state directories have
 independent locks, even when the database path is the same.
 
-The current bootstrap has no registered event collectors and returns an error
-after startup checks. It creates only the state directory and lock file, not
-`state.json` or a metrics file. The lock is released on this error path too;
-this is not yet a continuously running collection service.
+Only `devlink_event` is registered. The CLI still performs startup checks only:
+if that table exists, it returns `metrics publication is not implemented` and
+releases its resources. A database without a supported table returns the
+no-collectors error. This is not yet a continuously running exporter.
+
+## In-memory collection API
+
+`OpenEngine` acquires the lock and opens the source read-only. `Engine.Poll`
+applies the round budget and calls the table collector for bounded batches.
+`DevlinkCollector.CollectBatch` reads one batch and updates its public in-memory
+`LastID` and cumulative `Counts` only after that batch succeeds. `Close` releases
+the engine resources. Callers must validate configuration first and serialize
+access to each collector and engine. Stop the collector before replacing or
+restoring the database file. The collector does not monitor path replacement
+while running.
+
+Identical five-field label tuples accumulate in the same map entry; new tuples
+start from zero. A failed batch leaves its counts and cursor unchanged. Earlier
+successful batches in the same poll remain applied. There is no label-key JSON
+encoding, custom map container or historical/live split. Devlink values are
+kept as scanned: there are no per-value length, UTF-8 or control-character
+checks; the aggregate series cap still applies.
+
+This API does not read or write `state.json` or `.prom`. Opening a new engine
+starts from ID zero with empty counters, even if a state file exists. It may
+create only the private directory and `collector.lock`. Do not treat a memory
+cursor as published progress or use this slice as a restart-safe exporter.
 
 ## Current documentation
 

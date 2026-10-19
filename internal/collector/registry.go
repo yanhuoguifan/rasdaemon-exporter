@@ -1,9 +1,8 @@
 package collector
 
-// supportedTableNames is deliberately empty until a table projection and its
-// metric contract are implemented together. Discovering a SQLite table alone
-// never makes it safe for the exporter to collect that table.
-var supportedTableNames = []string{}
+// supportedTableNames lists only tables with a complete projection and metric
+// contract. Unknown database tables remain outside the collection path.
+var supportedTableNames = []string{"devlink_event"}
 
 // matchingSupportedTables returns registered collectors whose tables exist.
 // Keeping discovery and registration separate prevents unknown tables from

@@ -74,26 +74,41 @@ Do not compare a reported rasdaemon version or add per-release SQL fallbacks. Th
 
 Use each table's integer `id` as the incremental key; never sort or resume by event timestamp. The input assumption is that each active table is append-only for the lifetime of its database file and receives unique, increasing integer IDs. ID gaps are allowed. Do not require the DDL to use `AUTOINCREMENT` and do not modify rasdaemon's schema.
 
-At initial enrollment, capture each active table's maximum ID in one short, consistent read snapshot and durably save the boundaries before consuming rows. Keep separate cursors for:
-
-- `baseline`: historical rows with `id <= baseline_end_id`; these increment baseline-scoped counters and do not represent newly observed faults.
-- `live`: rows with `id > baseline_end_id`; these are collected independently, including while historical baseline import is still in progress.
-
-Fairly schedule bounded work by `(table, lane)` so a large history or busy table cannot starve live data or quieter tables. Retain the two cursors until the baseline boundary has been consumed; never resample a committed boundary on restart. Metric scope and exact row-vs-weighted counting are defined in `METRICS.md`.
+Use one monotonically advancing ID cursor per active table. On first enrollment,
+start at ID zero and read retained rows in bounded, ascending-ID batches. Rows
+already present at startup and rows appended later use the same counting path;
+there is no baseline boundary, second cursor, or baseline/live metric scope.
+Fairly schedule bounded work by table so a large history or busy table cannot
+starve quieter tables. The cursor advances only after its batch has been
+successfully incorporated into the cumulative counters. Exact labels and
+row-versus-weighted counting are defined in `METRICS.md`.
 
 Starting defaults for implementation are a 5-second poll interval, at most 500 rows per query, and at most 6,000 rows across a poll. A cooperative 2-second per-poll work budget, 500 ms query deadline, and 250 ms SQLite busy timeout are tuning defaults, not latency guarantees; the deadline may not preempt filesystem sync. Use one SQLite connection and short read transactions. Finish mapping the batch and close its transaction before saving exporter state or writing output.
 
-Probe live backlog with an ordered, bounded query of at most 1,001 IDs per active table, not an unbounded `COUNT(*)` or `MAX(id)-cursor` estimate. Report values through 1,000 exactly and 1,001 as “at least 1,001.” Database size is the main database file's logical size. File-system free space is covered by existing node-exporter metrics.
+Probe backlog after each table cursor with an ordered, bounded query of at most
+1,001 IDs per active table, not an unbounded `COUNT(*)` or `MAX(id)-cursor`
+estimate. Report values through 1,000 exactly and 1,001 as “at least 1,001.”
+Database size is the main database file's logical size. File-system free space
+is covered by existing node-exporter metrics.
 
 ## State, failure, and output durability
 
-The database is opened read-only. Use a bounded busy timeout and query-only protection. Never use SQLite options that suppress normal locking, never write the source database, and do not clean up or truncate rasdaemon history. Check source file device/inode identity at bounded collection points; replacement is fatal rather than a reason to start a new baseline silently.
+The database is opened read-only. Use a bounded busy timeout and query-only
+protection. Never use SQLite options that suppress normal locking, never write
+the source database, and do not clean up or truncate rasdaemon history. Check
+Do not replace or restore the source file while the collector is running; stop
+it first. The exporter does not monitor path replacement.
 
-Persist the active table set, per-table baseline boundary and cursors, observed maximum IDs, counter samples, and scheduling/health state in an exporter-owned state directory. Hold one exclusive process lock for the lifetime of the collector. Protect state and output paths against unsafe symlink use and enforce configured size/series bounds.
+Persist the active table set, one cursor per table, observed maximum IDs, and
+scheduling/health state in the exporter-owned state directory. Cumulative
+counter samples belong to the metrics snapshot, not the cursor state. Hold one
+exclusive process lock for the lifetime of the collector. Protect state and
+output paths against unsafe symlink use and enforce configured size/series
+bounds.
 
 Compare each observed table maximum with the last durably observed maximum. If it moves backwards, or a previously non-empty active table is observed empty, stop with a clear error and preserve the last valid state. This is a rollback detector, not a complete history auditor. The exporter deliberately does not hash anchor rows or reread consumed history: it will not detect old-row edits/deletions, and cannot detect every ID reuse (for example, reuse while the observed maximum remains higher). These violate the append-only input assumption and are not repaired automatically.
 
-The exporter state may carry a format marker and integrity check so malformed or incompatible state is rejected. Do not build migration machinery or guarantee compatibility with state produced by earlier in-progress exporter implementations. Corrupt state, an unsupported current state format, disappearance of an enrolled table, or an ambiguous state/output combination is an explicit error; never silently reset counters or resample a baseline. A newly appearing supported table remains pending as described above. An operator may explicitly reinitialize only after the old state and owned output have been safely backed up. Reinitialization starts fresh counters and a new baseline; it does not migrate aggregates or modify the source database.
+The exporter state may carry a format marker and integrity check so malformed or incompatible state is rejected. Do not build migration machinery or guarantee compatibility with state produced by earlier in-progress exporter implementations. Corrupt state, an unsupported current state format, disappearance of an enrolled table, or an ambiguous state/output combination is an explicit error; never silently reset counters or cursor progress. A newly appearing supported table remains pending as described above. An operator may explicitly reinitialize only after the old state and owned output have been safely backed up. Reinitialization starts fresh counters and cursors at zero; it does not migrate aggregates or modify the source database.
 
 Automatic first initialization is permitted only when both the exporter state and its owned output are absent, after acquiring the lock and passing source/configuration checks. A valid state with a missing output is recoverable by republishing from durable samples. An output without state is not a first install and must not be overwritten. If both files are removed, the process cannot distinguish a clean install from simultaneous loss; this ambiguity must be documented and must not be disguised as a continuity guarantee.
 
@@ -106,19 +121,46 @@ For each successful batch:
 
 State is committed before output. If output publication fails, retry publication from saved counters; do not recount the committed batch. If state commit fails, do not advance in-memory committed cursors or publish candidate counters. Errors are logged with a stable reason, table/path context, and recovery action; never log credentials or dump whole event records as a substitute for metrics.
 
-SQLite busy/locked errors and bounded query timeouts are retryable on a later poll. Keep event counters and cursors unchanged for the failed task, set its query health to failure, preserve its last-success time, and commit/publish that health update when state/output remain safe and writable. Missing required columns, unreadable source values, ID rollback and database replacement are fatal rather than endlessly retried compatibility cases. On a fatal error, publish failure health only if it can be done from trusted state without advancing events; then exit with a diagnostic. Corrupt state, unsafe paths or storage failures may prevent any update. The old textfile can therefore remain visible with stale success values: operators must also check last-success time and node_exporter textfile modification time. No health metric guarantees a final failure sample after a crash or write failure.
+SQLite busy/locked errors and bounded query timeouts are retryable on a later poll. Keep event counters and cursors unchanged for the failed task, set its query health to failure, preserve its last-success time, and commit/publish that health update when state/output remain safe and writable. Missing required columns, unreadable source values, and ID rollback are fatal rather than endlessly retried compatibility cases. On a fatal error, publish failure health only if it can be done from trusted state without advancing events; then exit with a diagnostic. Corrupt state, unsafe paths or storage failures may prevent any update. The old textfile can therefore remain visible with stale success values: operators must also check last-success time and node_exporter textfile modification time. No health metric guarantees a final failure sample after a crash or write failure.
 
 ## Metrics and display enrichment
 
-Use the `rasdaemon_` public metric namespace in the evolving metric catalog. Business counters represent rows or the explicitly documented source weight; expose `scope="baseline"|"live"` so historical import is not confused with new collection. Do not synthesize zero-valued event series for absent tables or unseen label combinations. Do not decode firmware payloads, infer root cause/severity, normalize source strings, or add speculative labels. Apply only required Prometheus text escaping, bounded input validation, and representation conversions explicitly listed in `METRICS.md`.
+Use the `rasdaemon_` public metric namespace in the evolving metric catalog.
+Business counters represent rows or the explicitly documented source weight and
+accumulate all retained records through the table's single cursor. The exporter
+emits event-derived labels but no `node` or `scope` label. Prometheus scrape
+configuration adds the stable host identity uniformly. Do not synthesize
+zero-valued event series for absent tables or unseen label combinations. Do not
+decode firmware payloads, infer root cause/severity, normalize source strings,
+or add speculative labels. Apply only required Prometheus text escaping,
+bounded input validation, and representation conversions explicitly listed in
+`METRICS.md`.
 
-Per active table, expose only query duration, query success, last successful query time, and bounded live backlog; expose database file size and business-series count once per node. Compute `rasdaemon_series_count` from the final hardware counter sample set and publish it in the same atomic textfile, excluding all collector gauges. No additional database query, persisted count or textfile-size metric is needed. These are collection-health measures, not a complete audit trail. Successful query/scan and durable state commit are required before success time advances; an empty result is also success. The rate of a live counter means records consumed by the exporter over that Prometheus range; catching up on backlog can make it differ from the hardware event occurrence rate. A newly observed series can start with a positive count without a preceding zero sample, so increase-based rules can miss its first event. The exporter does not guarantee one notification per hardware record.
+Per active table, expose only query duration, query success, last successful
+query time, and bounded backlog; expose database file size and business-series
+count once per exporter process. Compute `rasdaemon_series_count` from the final
+hardware counter sample set and publish it in the same atomic textfile,
+excluding all collector gauges. No additional database query, persisted count
+or textfile-size metric is needed. These are collection-health measures, not a
+complete audit trail. Successful query/scan and durable state commit are
+required before success time advances; an empty result is also success. Counter
+growth during startup or backlog catch-up means records consumed by the exporter
+over that Prometheus range, not necessarily the hardware event occurrence rate.
+A newly observed series can start with a positive count without a preceding zero
+sample, so increase-based rules can miss its first event. The exporter does not
+guarantee one notification per hardware record.
 
 PCI and block-device names are display-only enrichment. Resolve the current local mapping using bounded, read-only lookup (PCI metadata for AER and sysfs for block devices), outside the SQLite transaction and outside persistent aggregation identity. Use a modest bounded cache and execution/response limits. Missing, raced, unsupported, or stacked-device mappings become `unknown`; they never block counting or cursor advancement. A resolved name/model describes the current system, not proof of which physical device was present at event time. Do not write device configuration, issue hardware-management commands, or guess a leaf physical disk for a stacked block device.
 
 For PCI lookup, use the fixed local command `/usr/bin/lspci -A linux-sysfs -D -vmm -s BDF` with an argument array, no shell or network access. Validate BDF only for lookup; never change the source label. Bound execution to one second and output to 64 KiB. Each resolver uses at most 256 cache entries, five-minute refresh eligibility, and at most one lookup per publication, with fair refresh scheduling. Block lookup reads `/sys/dev/block/major:minor` and explicitly related model attributes; it does not open block devices, issue ioctls or recursively guess through backing-device stacks. Names are optional and both lookup paths can be disabled. These limits are implementation defaults, not new per-table configuration frameworks.
 
-Keep resource budgets explicit: the starting business-series budget is 10,000, persisted state is bounded to 2 MiB and text output to 4 MiB. Individual source-value and label limits are defined in METRICS.md. Budget exhaustion is reported rather than silently dropping records. Full raw-text retention, particularly DEVLINK messages, can reach the series budget even when the source database is small.
+Keep resource budgets explicit: the starting business-series budget is 10,000,
+persisted state is bounded to 2 MiB and text output to 4 MiB. Per-value and
+label limits, where applicable, are defined in METRICS.md; the devlink collector
+preserves scanned source strings without per-value length or encoding checks.
+Budget exhaustion is reported rather than silently dropping records. Full
+raw-text retention, particularly DEVLINK messages, can reach the series budget
+even when the source database is small.
 
 ## Decisions still open
 

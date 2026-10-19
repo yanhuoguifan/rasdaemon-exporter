@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -21,11 +22,50 @@ func TestCLIHelpDoesNotNeedTheHostDatabase(t *testing.T) {
 	for _, expected := range []string{
 		"--db", collector.DefaultDatabasePath,
 		"--state-dir", collector.DefaultStateDir,
-		"no event collectors",
+		"metrics publication is not implemented yet",
 	} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(expected)) {
 			t.Errorf("--help output does not contain %q:\n%s", expected, output)
 		}
+	}
+}
+
+func TestCLIWithDevlinkTableDoesNotPollOrPublish(t *testing.T) {
+	directory := t.TempDir()
+	databasePath := filepath.Join(directory, "events.db")
+	// Discovery succeeds, but any collection attempt fails on missing columns.
+	createSQLite(t, databasePath, "CREATE TABLE devlink_event (id INTEGER PRIMARY KEY)")
+	before := fileDigest(t, databasePath)
+	stateDir := filepath.Join(directory, "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatalf("create state directory: %v", err)
+	}
+	statePath := filepath.Join(stateDir, "state.json")
+	marker := []byte("leave this state untouched\n")
+	if err := os.WriteFile(statePath, marker, 0o600); err != nil {
+		t.Fatalf("create state marker: %v", err)
+	}
+
+	command := exec.Command(buildCLI(t), "--state-dir", stateDir, "--db", databasePath)
+	command.Dir = t.TempDir()
+	output, err := command.CombinedOutput()
+	if exitError, ok := err.(*exec.ExitError); !ok || exitError.ExitCode() != 1 {
+		t.Fatalf("CLI exit = %v, want code 1; output:\n%s", err, output)
+	}
+	if !strings.Contains(strings.ToLower(string(output)), "metrics publication is not implemented") {
+		t.Fatalf("CLI did not report the unpublished runtime boundary:\n%s", output)
+	}
+	if got, err := os.ReadFile(statePath); err != nil || !reflect.DeepEqual(got, marker) {
+		t.Fatalf("CLI changed existing state marker: contents=%q err=%v", got, err)
+	}
+	if got := fileDigest(t, databasePath); got != before {
+		t.Fatal("CLI changed the read-only SQLite source")
+	}
+	if entries := directoryEntries(t, stateDir); !reflect.DeepEqual(entries, []string{"collector.lock", "state.json"}) {
+		t.Fatalf("CLI created unexpected state files: %v", entries)
+	}
+	if entries := directoryEntries(t, directory); strings.Contains(strings.Join(entries, " "), ".prom") {
+		t.Fatalf("CLI unexpectedly published a textfile metric: %v", entries)
 	}
 }
 

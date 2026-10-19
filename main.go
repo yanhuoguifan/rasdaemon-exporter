@@ -54,7 +54,7 @@ func parseConfig(args []string, stderr io.Writer) (collector.Config, error) {
 		"absolute path to the private collector state directory")
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: rasdaemon-exporter [--db PATH] [--state-dir PATH]")
-		fmt.Fprintln(stderr, "Runtime bootstrap only; no event collectors are registered yet.")
+		fmt.Fprintln(stderr, "Metrics publication is not implemented yet.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
