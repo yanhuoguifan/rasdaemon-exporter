@@ -620,7 +620,7 @@ func TestDevlinkCollectorRetriesAfterBoundedSQLiteBusyError(t *testing.T) {
 	}
 }
 
-func TestEnginePollCreatesNoPersistentStateOrPromFile(t *testing.T) {
+func TestEngineOpenCreatesOnlyLockAndCloseReleasesResources(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "events.db")
 	createDevlinkDatabase(t, path, devlinkFixture{id: 1, busName: "pci", devName: "0000:01:00.0",
@@ -631,9 +631,6 @@ func TestEnginePollCreatesNoPersistentStateOrPromFile(t *testing.T) {
 	engine, err := collector.OpenEngine(context.Background(), cfg)
 	if err != nil {
 		t.Fatalf("open engine: %v", err)
-	}
-	if err := engine.Poll(context.Background()); err != nil {
-		t.Fatalf("poll engine: %v", err)
 	}
 	if err := engine.Close(); err != nil {
 		t.Fatalf("close engine: %v", err)

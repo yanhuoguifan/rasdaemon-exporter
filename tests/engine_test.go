@@ -171,7 +171,11 @@ func TestRunAcquiresStateLockBeforeOpeningSQLite(t *testing.T) {
 	t.Cleanup(func() { _ = lock.Close() })
 
 	databasePath := filepath.Join(t.TempDir(), "missing.db")
-	cfg := collector.Config{DatabasePath: databasePath, StateDir: stateDir}
+	cfg := collector.Config{
+		DatabasePath: databasePath,
+		StateDir:     stateDir,
+		SnapshotPath: filepath.Join(t.TempDir(), "metrics.prom"),
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate test configuration: %v", err)
 	}
@@ -198,7 +202,11 @@ func TestRunRejectsUnsafeExistingStateDirectoryWithoutChangingIt(t *testing.T) {
 
 	for name, stateDir := range map[string]string{"group-accessible": target, "symlink": link} {
 		t.Run(name, func(t *testing.T) {
-			cfg := collector.Config{DatabasePath: missingDatabase, StateDir: stateDir}
+			cfg := collector.Config{
+				DatabasePath: missingDatabase,
+				StateDir:     stateDir,
+				SnapshotPath: filepath.Join(t.TempDir(), "metrics.prom"),
+			}
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("validate test configuration: %v", err)
 			}

@@ -30,6 +30,7 @@ func validatedConfig(t *testing.T, databasePath string) collector.Config {
 	cfg := collector.Config{
 		DatabasePath: databasePath,
 		StateDir:     filepath.Join(t.TempDir(), "state"),
+		SnapshotPath: filepath.Join(filepath.Dir(databasePath), "metrics.prom"),
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate test configuration: %v", err)

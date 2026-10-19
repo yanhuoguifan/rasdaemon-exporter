@@ -104,26 +104,14 @@ func TestStateAdvanceRejectsInvalidUpdatesWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestStateCheckAcceptsMatchingAndOneGenerationAhead(t *testing.T) {
+func TestStateCheckSourceAcceptsMatchingIdentity(t *testing.T) {
 	state := stateForTransitions()
-	for _, test := range []struct {
-		name       string
-		generation uint64
-		want       bool
-	}{
-		{name: "matching snapshot", generation: state.Generation, want: false},
-		{name: "snapshot one ahead", generation: state.Generation + 1, want: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			got, err := state.Check(state.Source, test.generation)
-			if err != nil || got != test.want {
-				t.Fatalf("Check() = (%t, %v), want (%t, nil)", got, err, test.want)
-			}
-		})
+	if err := state.CheckSource(state.Source); err != nil {
+		t.Fatalf("CheckSource() error = %v", err)
 	}
 }
 
-func TestStateCheckRejectsSourceAndGenerationMismatch(t *testing.T) {
+func TestStateCheckSourceRejectsInvalidStateAndMismatchedIdentity(t *testing.T) {
 	state := stateForTransitions()
 	wrongSources := []collector.SourceIdentity{
 		{Path: "/other/ras-mc_event.db", Device: state.Source.Device, Inode: state.Source.Inode},
@@ -131,14 +119,18 @@ func TestStateCheckRejectsSourceAndGenerationMismatch(t *testing.T) {
 		{Path: state.Source.Path, Device: state.Source.Device, Inode: state.Source.Inode + 1},
 	}
 	for index, source := range wrongSources {
-		if _, err := state.Check(source, state.Generation); err == nil {
-			t.Fatalf("Check() accepted mismatched source identity %d", index)
+		if err := state.CheckSource(source); err == nil {
+			t.Fatalf("CheckSource() accepted mismatched source identity %d", index)
 		}
 	}
 
-	for _, generation := range []uint64{0, state.Generation - 1, state.Generation + 2, math.MaxUint64} {
-		if _, err := state.Check(state.Source, generation); err == nil {
-			t.Fatalf("Check() accepted unexpected snapshot generation %d", generation)
+	for _, invalid := range []*collector.State{
+		{Source: state.Source, Tables: state.Tables},
+		{Generation: state.Generation, Source: collector.SourceIdentity{Path: "relative"}, Tables: state.Tables},
+		{Generation: state.Generation, Source: state.Source},
+	} {
+		if err := invalid.CheckSource(state.Source); err == nil {
+			t.Fatalf("CheckSource() accepted invalid state %#v", invalid)
 		}
 	}
 }
@@ -149,12 +141,6 @@ func TestStateTransitionsHandleGenerationBoundary(t *testing.T) {
 	next, err := state.Advance(nil)
 	if err != nil || next.Generation != math.MaxUint64 {
 		t.Fatalf("Advance() at generation boundary = (%#v, %v)", next, err)
-	}
-	if rebuild, err := state.Check(state.Source, math.MaxUint64); err != nil || !rebuild {
-		t.Fatalf("Check() for one-ahead max generation = (%t, %v), want (true, nil)", rebuild, err)
-	}
-	if rebuild, err := next.Check(next.Source, math.MaxUint64); err != nil || rebuild {
-		t.Fatalf("Check() at max generation = (%t, %v), want (false, nil)", rebuild, err)
 	}
 	if _, err := next.Advance(nil); err == nil {
 		t.Fatal("Advance() wrapped maximum generation")

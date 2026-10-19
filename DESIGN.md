@@ -110,7 +110,13 @@ Compare each observed table maximum with its consumed cursor. If the maximum is 
 
 The exporter state may carry a format marker and integrity check so malformed or incompatible state is rejected. Do not build migration machinery or guarantee compatibility with state produced by earlier in-progress exporter implementations. Corrupt state, an unsupported current state format, disappearance of an enrolled table, or an ambiguous state/output combination is an explicit error; never silently reset counters or cursor progress. A newly appearing supported table remains pending as described above. An operator may explicitly reinitialize only after the old state and owned output have been safely backed up. Reinitialization starts fresh counters and cursors at zero; it does not migrate aggregates or modify the source database.
 
-Automatic first initialization is permitted only when both the exporter state and its owned output are absent, after acquiring the lock and passing source/configuration checks. A missing member of an existing state/output pair is an explicit error: the state does not contain the counters needed to recreate a missing snapshot. If both files are removed, the process cannot distinguish a clean install from simultaneous loss; this ambiguity must be documented and must not be disguised as a continuity guarantee.
+Automatic first initialization is permitted when state, output, and backup are
+absent, after acquiring the lock. An orphaned generation-one output completes
+initialization by writing zero-cursor state; generation one is trusted to be the
+empty initialization snapshot. Other missing-state cases are errors. When state
+exists, a matching backup can restore missing or damaged output. If all files
+are removed, the process cannot distinguish a clean install from simultaneous
+loss; this is not a continuity guarantee.
 
 The text snapshot stores a positive generation in the comment
 `# rasdaemon-exporter generation=N` and cumulative counter families.
@@ -144,20 +150,29 @@ errors. The snapshot does not independently prove that an absent family had no
 events. Delegate HELP/TYPE syntax to the Prometheus library instead of scanning
 metadata or inserting temporary samples to preserve empty families.
 
-For each successful batch:
+For each successful collection round:
 
 1. Read and map bounded rows, then close the SQLite read transaction.
 2. Validate candidate counters and checkpoints.
-3. Encode candidate samples with the next generation and durably replace the `.prom` snapshot using a same-directory temporary file, `fsync`, atomic rename, and directory sync.
-4. Durably save the matching generation and cursors in `state.json` using the same durable-file pattern.
+3. Durably save the current committed snapshot to `<snapshotPath>.prev`, leaving the current output readable. Its generation must match the committed state.
+4. Encode candidate samples with the next generation and durably replace the `.prom` snapshot using a same-directory temporary file, `fsync`, atomic rename, and directory sync.
+5. Durably save the matching generation and cursors in `state.json` using the same durable-file pattern.
+6. Remove the backup on a best-effort basis. Cleanup failure does not undo a successful commit.
 
-Output is published before state. Stop on publication or state-save failure;
-do not continue consuming rows. On restart, equal generations restore counters
-from the snapshot and cursors from state. A snapshot exactly one generation
-ahead requires rebuilding retained SQLite history using that pending generation;
-other mismatches are errors. This coordination and recovery are not performed by
-the standalone snapshot codec. Errors include table/path context and must not
-dump whole event records as a substitute for metrics.
+Output is published before state. Stop on backup, publication, or state-save
+failure; do not continue consuming rows. On restart, a valid matching current
+snapshot wins over any stale backup. Otherwise, a valid backup matching state
+is atomically restored to the current output, and collection resumes from that
+state's cursor and the backup's counts. Do not rename the current output away
+or delete the backup before restoration is durable. The `.prev` suffix is not
+scraped by node_exporter's textfile collector.
+
+If neither the current snapshot nor the previous snapshot matches the committed
+state, startup fails without rebuilding from SQLite history. First
+initialization has no prior snapshot to back up. Only one backup is retained,
+and stale-backup deletion is not required for correctness. The standalone
+snapshot codec does not implement this coordination. Errors include context,
+not complete event records.
 
 SQLite busy/locked errors and bounded query timeouts are retryable on a later poll. Keep event counters and cursors unchanged for the failed task, set its query health to failure, preserve its last-success time, and commit/publish that health update when state/output remain safe and writable. Missing required columns, unreadable source values, and ID rollback are fatal rather than endlessly retried compatibility cases. On a fatal error, publish failure health only if it can be done from trusted state without advancing events; then exit with a diagnostic. Corrupt state, unsafe paths or storage failures may prevent any update. The old textfile can therefore remain visible with stale success values: operators must also check last-success time and node_exporter textfile modification time. No health metric guarantees a final failure sample after a crash or write failure.
 

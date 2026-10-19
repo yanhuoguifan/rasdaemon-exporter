@@ -21,6 +21,11 @@ type State struct {
 	Tables     map[string]int64 `json:"tables"`
 }
 
+// NewState creates the first generation with caller-provided table cursors.
+func NewState(source SourceIdentity, tables map[string]int64) *State {
+	return &State{Generation: 1, Source: source, Tables: tables}
+}
+
 // SourceIdentity binds progress to a database file, not a rasdaemon version.
 // The caller obtains this identity; state persistence does not inspect the source.
 type SourceIdentity struct {
@@ -103,24 +108,15 @@ func (s *State) Advance(cursors map[string]int64) (*State, error) {
 	return next, nil
 }
 
-// Check compares caller-provided database identity and snapshot generation.
-// A metrics snapshot exactly one generation ahead means recovery must rebuild
-// retained history. The caller owns that recovery and reuses the pending generation.
-func (s *State) Check(source SourceIdentity, snapshotGeneration uint64) (needsRebuild bool, err error) {
+// CheckSource validates the state and confirms it belongs to the current database file.
+func (s *State) CheckSource(source SourceIdentity) error {
 	if err := validateState(s); err != nil {
-		return false, err
+		return err
 	}
 	if source != s.Source {
-		return false, errors.New("source database identity does not match state")
+		return errors.New("source database identity does not match state")
 	}
-	if snapshotGeneration == s.Generation {
-		return false, nil
-	}
-	// Subtract only after comparing, so uint64 overflow cannot look like a match.
-	if snapshotGeneration > s.Generation && snapshotGeneration-s.Generation == 1 {
-		return true, nil
-	}
-	return false, fmt.Errorf("snapshot generation %d does not match state generation %d", snapshotGeneration, s.Generation)
+	return nil
 }
 
 // LoadState reads and validates the durable cursor snapshot while the caller

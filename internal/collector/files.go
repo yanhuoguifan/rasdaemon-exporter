@@ -88,6 +88,14 @@ func readRegularFile(path string, limit int64) ([]byte, error) {
 	return contents, nil
 }
 
+// removeRegularFile best-effort removes path when it names a regular file.
+func removeRegularFile(path string) {
+	info, err := os.Lstat(path)
+	if err == nil && info.Mode().IsRegular() {
+		_ = os.Remove(path)
+	}
+}
+
 // atomicWriteFile replaces a regular file in a trusted directory held by the caller.
 // A same-directory temporary file keeps readers on complete old or new contents.
 func atomicWriteFile(path string, contents []byte, mode os.FileMode) error {

@@ -115,8 +115,8 @@ func devlinkLabelsFromMap(values map[string]string) (DevlinkLabels, error) {
 	return labels, nil
 }
 
-// CollectBatch reads one bounded batch and applies it only after the complete
-// read and counter checks succeed. Limit must be positive.
+// CollectBatch reads the next batch and applies it only after the complete read
+// and counter checks succeed. Limit must be positive.
 func (c *DevlinkCollector) CollectBatch(ctx context.Context, db *sql.DB, limit int) (int, error) {
 	if db == nil {
 		return 0, errors.New("SQLite source is nil")
@@ -173,10 +173,9 @@ func readDevlinkBatch(ctx context.Context, db *sql.DB, afterID int64, limit int)
 	if maxID < afterID {
 		return devlinkBatch{}, fmt.Errorf("devlink_event maximum ID moved backwards from %d to %d", afterID, maxID)
 	}
-
-	rows, err := tx.QueryContext(queryCtx,
-		`SELECT id, bus_name, dev_name, driver_name, reporter_name, msg
-		 FROM devlink_event WHERE id > ? ORDER BY id LIMIT ?`, afterID, limit)
+	query := `SELECT id, bus_name, dev_name, driver_name, reporter_name, msg
+		 FROM devlink_event WHERE id > ? ORDER BY id LIMIT ?`
+	rows, err := tx.QueryContext(queryCtx, query, afterID, limit)
 	if err != nil {
 		return devlinkBatch{}, fmt.Errorf("query devlink events after ID %d: %w", afterID, err)
 	}
