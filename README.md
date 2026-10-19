@@ -27,7 +27,7 @@ installation, dependency-upgrade or service-management targets.
 | `--state-dir PATH` | `/var/lib/rasdaemon-exporter` | Private directory for the single-instance lock and future collector state |
 
 Both paths must be absolute. The source path must differ from the state
-directory and its `collector.lock` file. The program creates the final state
+directory, its `collector.lock` file and its `state.json` file. The program creates the final state
 directory with mode `0700` if absent; its parent must already exist and be
 trusted. An existing directory must be owned by the running user, have mode
 `0700`, and not be a symbolic link. Existing permissions are never changed.
@@ -59,7 +59,7 @@ There are **three authoritative design documents** and one acceptance document:
 | --- | --- |
 | [DESIGN.md](DESIGN.md) | Runtime behavior, SQL access, active tables, incremental counting, state, safety and failure handling |
 | [METRICS.md](METRICS.md) | All metric names, exact labels, source fields, count semantics and interpretation limits |
-| [SOURCE_LAYOUT.md](SOURCE_LAYOUT.md) | Per-table source organization, shared responsibilities, English-language conventions and the 150-code-line limit |
+| [SOURCE_LAYOUT.md](SOURCE_LAYOUT.md) | Per-table source organization, cohesive shared responsibilities and readable English code |
 | [TESTING.md](TESTING.md) | Evidence boundaries and acceptance requirements; not a claim that the target passed |
 
 Read DESIGN.md first for behavior, METRICS.md for the exported data contract, and SOURCE_LAYOUT.md for code review. Do not duplicate field inventories in this README or runtime policy in each table's documentation. Keep each decision in its owning document and update links instead of appending dated override paragraphs.

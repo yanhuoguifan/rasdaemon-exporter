@@ -58,12 +58,19 @@ func TestCLIConfigurationErrorsExitTwo(t *testing.T) {
 
 func TestCLIRejectsDatabasePathsThatOverlapState(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
-	for _, databasePath := range []string{
-		stateDir,
-		filepath.Join(stateDir, "collector.lock"),
-	} {
-		t.Run(filepath.Base(databasePath), func(t *testing.T) {
-			output, code := runCLI(t, "--state-dir", stateDir, "--db", databasePath)
+	separator := string(filepath.Separator)
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "state directory", path: stateDir},
+		{name: "lock file", path: filepath.Join(stateDir, "collector.lock")},
+		{name: "state file", path: filepath.Join(stateDir, "state.json")},
+		{name: "normalized state file", path: stateDir + separator + "." + separator + "state.json"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			output, code := runCLI(t, "--state-dir", stateDir, "--db", test.path)
 			if code != 2 {
 				t.Fatalf("CLI exit code = %d, want 2; output:\n%s", code, output)
 			}
@@ -71,6 +78,35 @@ func TestCLIRejectsDatabasePathsThatOverlapState(t *testing.T) {
 				t.Fatalf("invalid overlapping paths created state directory: %v", err)
 			}
 		})
+	}
+}
+
+func TestCLIRejectsDatabaseAtStateFileWithoutChangingSource(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	if err := os.Mkdir(stateDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sourcePath := filepath.Join(stateDir, "state.json")
+	createSQLite(t, sourcePath, "CREATE TABLE source_fixture (value TEXT)")
+	before := fileDigest(t, sourcePath)
+
+	command := exec.Command(buildCLI(t), "--state-dir", stateDir, "--db", sourcePath)
+	output, err := command.CombinedOutput()
+	if exitError, ok := err.(*exec.ExitError); !ok || exitError.ExitCode() != 2 {
+		t.Fatalf("CLI exit error = %v, want exit code 2; output:\n%s", err, output)
+	}
+	if len(output) == 0 {
+		t.Fatal("CLI returned no path-collision diagnostic")
+	}
+	if after := fileDigest(t, sourcePath); after != before {
+		t.Fatal("CLI changed the SQLite source at the state-file path")
+	}
+	entries, err := os.ReadDir(stateDir)
+	if err != nil {
+		t.Fatalf("read state directory: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "state.json" {
+		t.Fatalf("CLI created state files beside the source database: %v", entries)
 	}
 }
 

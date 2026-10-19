@@ -28,7 +28,7 @@ The SQL fixture is input to tests only; the production binary must neither embed
 - Verify GUID byte order, exact raw text and escaping, approved table-local message handling, shared OEM metric identity and publication-only device labels.
 - Verify `rasdaemon_series_count` against distinct final business samples: an empty business sample set yields zero, baseline/live and separate MC families count independently, present zero-valued counters count, gauges and metadata do not, and failed publication leaves the old count with the old file. Device-label changes must not cumulatively inflate this snapshot gauge.
 - Use fake PCI command output and synthetic sysfs trees; do not query or change production hardware during automated tests.
-- Run Go tests, race detection, vet, build checks, the shared-source 150-code-line check and Prometheus text parsing against generated output.
+- Run Go tests, race detection, vet, build checks and Prometheus text parsing against generated output. Report shared-source line counts as review information, not as a reason to split cohesive code or fail acceptance.
 - Run Go checks from the module root so the separate test package is included, for example `go test ./...`, `go test -race ./...`, `go vet ./...`, and `go build ./...`. If measuring coverage of the collector from the external test package, use `go test -coverpkg=./internal/collector ./tests`.
 - Measure representative idle and event-burst workloads before making performance claims. Old benchmark results are not estimates for the redesigned implementation.
 

@@ -76,14 +76,21 @@ func TestConfigValidationRequiresAbsoluteNonRootStateDirectory(t *testing.T) {
 
 func TestConfigValidationKeepsDatabaseOutsideStatePaths(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
-	for _, databasePath := range []string{
-		stateDir,
-		filepath.Join(stateDir, "collector.lock"),
-	} {
-		t.Run(filepath.Base(databasePath), func(t *testing.T) {
-			config := collector.Config{DatabasePath: databasePath, StateDir: stateDir}
+	separator := string(filepath.Separator)
+	cases := []struct {
+		name string
+		path string
+	}{
+		{name: "state directory", path: stateDir},
+		{name: "lock file", path: filepath.Join(stateDir, "collector.lock")},
+		{name: "state file", path: filepath.Join(stateDir, "state.json")},
+		{name: "normalized state file", path: stateDir + separator + "." + separator + "state.json"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			config := collector.Config{DatabasePath: test.path, StateDir: stateDir}
 			if err := config.Validate(); err == nil {
-				t.Fatalf("Validate() accepted database path overlapping state: %q", databasePath)
+				t.Fatalf("Validate() accepted database path overlapping state: %q", test.path)
 			}
 		})
 	}

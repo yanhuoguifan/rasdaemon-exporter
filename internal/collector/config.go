@@ -41,10 +41,11 @@ func (c Config) Validate() error {
 	if !filepath.IsAbs(cleanStateDir) || cleanStateDir == string(filepath.Separator) {
 		return fmt.Errorf("state directory must be an absolute non-root path: %q", c.StateDir)
 	}
-	// Preparing state must never create a directory or lock at the source path.
+	// Collector-owned paths must never overwrite the source database.
 	source := filepath.Clean(c.DatabasePath)
-	if source == cleanStateDir || source == filepath.Join(cleanStateDir, "collector.lock") {
-		return errors.New("database path must differ from the state directory and lock file")
+	if source == cleanStateDir || source == filepath.Join(cleanStateDir, "collector.lock") ||
+		source == filepath.Join(cleanStateDir, stateFileName) {
+		return errors.New("database path must differ from the state directory, lock file and state file")
 	}
 	return nil
 }

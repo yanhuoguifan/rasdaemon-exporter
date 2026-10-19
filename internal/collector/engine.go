@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 )
 
 // ErrNoCollectors reports that this build has no supported table readers.
@@ -16,7 +18,7 @@ func Run(ctx context.Context, cfg Config) (runErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	stateDir, err := prepareStateDir(cfg.StateDir)
+	stateDir, err := preparePrivateDir(cfg.StateDir)
 	if err != nil {
 		return err
 	}
@@ -58,4 +60,13 @@ func Run(ctx context.Context, cfg Config) (runErr error) {
 	// A registered table reader must be wired into the engine in the same
 	// change that registers it. Until then, reporting success would be false.
 	return errors.New("registered table collectors are not wired into the bootstrap")
+}
+
+// AcquireLock applies the collector's lock-file convention to a prepared directory.
+// Keep the returned file open for the collector lifetime; never unlink it.
+func AcquireLock(stateDir string) (*os.File, error) {
+	if !filepath.IsAbs(stateDir) || filepath.Clean(stateDir) == string(filepath.Separator) {
+		return nil, errors.New("state directory must be an absolute non-root path")
+	}
+	return acquireFileLock(filepath.Join(stateDir, "collector.lock"))
 }

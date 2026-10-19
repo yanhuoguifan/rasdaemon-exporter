@@ -55,11 +55,9 @@ rasdaemon-exporter/
 │       └── rasdaemon-0.8.4.sql
 └── internal/collector/
     ├── config.go
-    ├── model.go
     ├── registry.go
     ├── engine.go
     ├── sqlite.go
-    ├── checkpoint.go
     ├── state.go
     ├── files.go
     ├── prometheus.go
@@ -114,17 +112,15 @@ Shared code is intentionally small and limited to mechanics used across tables.
 | --- | --- |
 | `main.go` | Parse commands, handle process signals, invoke the collector, and map fatal errors to exit status. |
 | `config.go` | Load defaults and validate paths, intervals, and resource bounds. |
-| `model.go` | Define small shared row, sample, task, and state values. |
 | `registry.go` | Assemble table descriptors in stable order; do not duplicate per-table SQL or metric definitions. |
-| `engine.go` | Schedule bounded baseline/live work fairly and enforce state-before-output ordering. |
+| `engine.go` | Coordinate the collector lifecycle, collection and snapshot publication; choose the runtime lock-file path. |
 | `sqlite.go` | Open the source read-only, apply bounded query safeguards, and run compiled named projections. |
-| `checkpoint.go` | Maintain separate baseline and live cursors, observed maximum IDs, and bounded backlog probes. |
-| `state.go` | Load, validate, and durably save collector-owned progress and counters. |
-| `files.go` | Enforce collector path/lock protections and atomically persist state and output files. |
+| `state.go` | Own state structures, JSON encoding/decoding, validation, generation/cursor transitions, identity checks and state load/save orchestration. |
+| `files.go` | Provide private-directory preparation, locking a caller-supplied path, bounded regular-file reading and atomic byte-file replacement. No state structures, JSON rules or fixed state filenames. |
 | `prometheus.go` | Escape and deterministically encode the text format and enforce configured series/output bounds. |
 | `device_name.go` | Perform optional bounded local device-name/model lookups outside counter identity and cursor logic. |
 
-Every shared production Go source file must remain at or below 150 non-comment, non-blank source lines. The cap is not a reason to compress statements, abbreviate names, or move explanatory comments out of the code. Split a shared file only at a cohesive responsibility boundary when needed to meet the cap; do not create one-function wrapper files. Table-specific files should remain focused and readable, but this shared-code cap does not impose an arbitrary limit on their source projections or field documentation.
+Responsibility and cohesion take priority over file length. Keep all state semantics in `state.go`, rather than splitting its model, codec, persistence orchestration and transitions solely to meet a line quota. Keep generic filesystem mechanics in `files.go`; these helpers receive paths and bytes, not state objects. Line counts are review information, not a hard pass/fail limit. Do not compress statements, abbreviate names, omit useful comments or add one-function wrapper files to reduce a count.
 
 Comments should explain why a safety check exists, what a source field actually represents, which sentinel or NULL behavior is intentional, and why a failure stops or continues collection. Avoid comments that merely restate the next line. Use Go formatting and descriptive English names. If line counting is automated later, count Go code positions rather than applying a formatting-sensitive regular expression; this design does not require a checker.
 
@@ -133,7 +129,7 @@ Comments should explain why a safety check exists, what a source field actually 
 ```text
 main.go → config.go → engine.go
                        ├─ table module → sqlite.go
-                       ├─ checkpoint.go / state.go
+                       ├─ state.go → files.go
                        ├─ device_name.go (optional enrichment)
                        └─ prometheus.go → textfile output
 ```
