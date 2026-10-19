@@ -51,6 +51,30 @@ new JSON/environment/CLI precedence framework. Additional runtime configuration
 can be added when its corresponding behavior is implemented. This section
 does not authorize connecting to the physical host database during development.
 
+## Runtime loop
+
+`--output PATH` selects the snapshot file (default
+`/var/lib/node_exporter/textfile_collector/rasdaemon.prom`). `--interval DURATION`
+defaults to `5s` and must be positive. CLI configuration is validated once before
+opening the engine. After startup recovery, collect and commit immediately, then
+wait the configured interval after each completed round. Run one serial loop;
+do not overlap rounds or accumulate timer ticks. SIGINT/SIGTERM cancel waits and
+context-aware queries. Once a file commit starts, retain its write ordering
+without inserting cancellation between snapshot and state. Any recovery,
+collection, or commit failure stops the engine; this implementation does not
+retry automatically. Only cancellation without other errors is a successful
+CLI shutdown; joined cleanup or I/O failures must remain visible.
+
+After each successful poll, compare the consumed cursor with the committed
+cursor. If it has not advanced, wait for the next round without creating a
+backup, writing snapshot/state, or advancing generation. Pending historical
+rows still require collection and commits even when SQLite has no new writes;
+do not use database mtime or a file hash to decide whether work remains.
+Initialization and backup recovery may still write files. Generation counts
+data commits, not successful polls; unchanged output mtime is not evidence of
+a stalled collector. Per-poll health gauges need a separate publication policy
+and must not cause idle event snapshots to be rewritten.
+
 ## Input discovery and compatibility behavior
 
 The compiled exporter knows these table names:
@@ -150,7 +174,7 @@ errors. The snapshot does not independently prove that an absent family had no
 events. Delegate HELP/TYPE syntax to the Prometheus library instead of scanning
 metadata or inserting temporary samples to preserve empty families.
 
-For each successful collection round:
+For each successful collection round that advances a cursor:
 
 1. Read and map bounded rows, then close the SQLite read transaction.
 2. Validate candidate counters and checkpoints.

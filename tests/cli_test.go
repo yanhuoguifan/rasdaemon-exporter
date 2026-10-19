@@ -1,13 +1,14 @@
 package collector_test
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -22,7 +23,8 @@ func TestCLIHelpDoesNotNeedTheHostDatabase(t *testing.T) {
 	for _, expected := range []string{
 		"--db", collector.DefaultDatabasePath,
 		"--state-dir", collector.DefaultStateDir,
-		"metrics publication is not implemented yet",
+		"--output", collector.DefaultSnapshotPath,
+		"--interval", "5s",
 	} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(expected)) {
 			t.Errorf("--help output does not contain %q:\n%s", expected, output)
@@ -30,42 +32,37 @@ func TestCLIHelpDoesNotNeedTheHostDatabase(t *testing.T) {
 	}
 }
 
-func TestCLIWithDevlinkTableDoesNotPollOrPublish(t *testing.T) {
-	directory := t.TempDir()
-	databasePath := filepath.Join(directory, "events.db")
-	// Discovery succeeds, but any collection attempt fails on missing columns.
-	createSQLite(t, databasePath, "CREATE TABLE devlink_event (id INTEGER PRIMARY KEY)")
-	before := fileDigest(t, databasePath)
-	stateDir := filepath.Join(directory, "state")
-	if err := os.Mkdir(stateDir, 0o700); err != nil {
-		t.Fatalf("create state directory: %v", err)
-	}
-	statePath := filepath.Join(stateDir, "state.json")
-	marker := []byte("leave this state untouched\n")
-	if err := os.WriteFile(statePath, marker, 0o600); err != nil {
-		t.Fatalf("create state marker: %v", err)
-	}
+func TestCLICollectsAndPublishesDevlinkEvents(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		signal os.Signal
+	}{
+		{name: "SIGINT", signal: os.Interrupt},
+		{name: "SIGTERM", signal: syscall.SIGTERM},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			databasePath := filepath.Join(directory, "events.db")
+			stateDir := filepath.Join(directory, "state")
+			outputPath := filepath.Join(directory, "metrics.prom")
+			createDevlinkDatabase(t, databasePath, recoveryEvent(1, "first event"))
 
-	command := exec.Command(buildCLI(t), "--state-dir", stateDir, "--db", databasePath)
-	command.Dir = t.TempDir()
-	output, err := command.CombinedOutput()
-	if exitError, ok := err.(*exec.ExitError); !ok || exitError.ExitCode() != 1 {
-		t.Fatalf("CLI exit = %v, want code 1; output:\n%s", err, output)
-	}
-	if !strings.Contains(strings.ToLower(string(output)), "metrics publication is not implemented") {
-		t.Fatalf("CLI did not report the unpublished runtime boundary:\n%s", output)
-	}
-	if got, err := os.ReadFile(statePath); err != nil || !reflect.DeepEqual(got, marker) {
-		t.Fatalf("CLI changed existing state marker: contents=%q err=%v", got, err)
-	}
-	if got := fileDigest(t, databasePath); got != before {
-		t.Fatal("CLI changed the read-only SQLite source")
-	}
-	if entries := directoryEntries(t, stateDir); !reflect.DeepEqual(entries, []string{"collector.lock", "state.json"}) {
-		t.Fatalf("CLI created unexpected state files: %v", entries)
-	}
-	if entries := directoryEntries(t, directory); strings.Contains(strings.Join(entries, " "), ".prom") {
-		t.Fatalf("CLI unexpectedly published a textfile metric: %v", entries)
+			command, stdout, stderr := startRuntimeCLI(t, databasePath, stateDir, outputPath, "1h")
+			waitForCommitted(t, stateDir, outputPath, 2, 1, map[collector.DevlinkLabels]uint64{
+				recoveryLabels("first event"): 1,
+			})
+			stopCLI(t, command, stdout, stderr, test.signal)
+			logs := stderr.String()
+			if strings.Count(logs, "Starting collection loop") != 1 {
+				t.Fatalf("startup log should appear once; stderr:\n%s", logs)
+			}
+			for _, expected := range []string{databasePath, outputPath, "interval=1h"} {
+				if !strings.Contains(logs, expected) {
+					t.Errorf("startup log does not contain %q; stderr:\n%s", expected, logs)
+				}
+			}
+			assertStateLockReleased(t, stateDir)
+		})
 	}
 }
 
@@ -81,6 +78,10 @@ func TestCLIConfigurationErrorsExitTwo(t *testing.T) {
 		{name: "empty state directory", args: []string{"--state-dir="}},
 		{name: "relative state directory", args: []string{"--state-dir=relative-state"}},
 		{name: "root state directory", args: []string{"--state-dir=/"}},
+		{name: "zero interval", args: []string{"--interval=0"}},
+		{name: "negative interval", args: []string{"--interval=-1s"}},
+		{name: "invalid interval", args: []string{"--interval=soon"}},
+		{name: "relative output", args: []string{"--output=relative.prom"}},
 	}
 
 	for _, test := range cases {
@@ -91,6 +92,38 @@ func TestCLIConfigurationErrorsExitTwo(t *testing.T) {
 			}
 			if output == "" {
 				t.Fatal("CLI returned no diagnostic")
+			}
+		})
+	}
+}
+
+func TestCLIInvalidRuntimeOptionsDoNotCreateFiles(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "zero interval", args: []string{"--interval=0"}},
+		{name: "negative interval", args: []string{"--interval=-1s"}},
+		{name: "invalid interval", args: []string{"--interval=soon"}},
+		{name: "relative output", args: []string{"--output=relative.prom"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			directory := t.TempDir()
+			stateDir := filepath.Join(directory, "state")
+			outputPath := filepath.Join(directory, "metrics.prom")
+			databasePath := filepath.Join(directory, "missing.db")
+			args := []string{"--db", databasePath, "--state-dir", stateDir, "--output", outputPath}
+			args = append(args, test.args...)
+			command := exec.Command(buildCLI(t), args...)
+			command.Dir = directory
+			output, err := command.CombinedOutput()
+			if exitError, ok := err.(*exec.ExitError); !ok || exitError.ExitCode() != 2 {
+				t.Fatalf("CLI exit = %v, want 2; output:\n%s", err, output)
+			}
+			for _, path := range []string{stateDir, outputPath, databasePath, filepath.Join(directory, "relative.prom")} {
+				if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("invalid configuration created %q: %v", path, err)
+				}
 			}
 		})
 	}
@@ -122,7 +155,8 @@ func TestCLIRejectsDatabasePathsThatOverlapState(t *testing.T) {
 }
 
 func TestCLIRejectsDatabaseAtStateFileWithoutChangingSource(t *testing.T) {
-	stateDir := filepath.Join(t.TempDir(), "state")
+	directory := t.TempDir()
+	stateDir := filepath.Join(directory, "state")
 	if err := os.Mkdir(stateDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -130,7 +164,8 @@ func TestCLIRejectsDatabaseAtStateFileWithoutChangingSource(t *testing.T) {
 	createSQLite(t, sourcePath, "CREATE TABLE source_fixture (value TEXT)")
 	before := fileDigest(t, sourcePath)
 
-	command := exec.Command(buildCLI(t), "--state-dir", stateDir, "--db", sourcePath)
+	command := exec.Command(buildCLI(t), "--state-dir", stateDir,
+		"--output", filepath.Join(directory, "metrics.prom"), "--db", sourcePath)
 	output, err := command.CombinedOutput()
 	if exitError, ok := err.(*exec.ExitError); !ok || exitError.ExitCode() != 2 {
 		t.Fatalf("CLI exit error = %v, want exit code 2; output:\n%s", err, output)
@@ -209,11 +244,14 @@ func TestCLISourceFailuresExitOne(t *testing.T) {
 
 func runCLI(t *testing.T, args ...string) (string, int) {
 	t.Helper()
-	// Isolate tests from the host default; later caller flags may override it.
-	stateDir := filepath.Join(t.TempDir(), "state")
-	commandArgs := append([]string{"--state-dir", stateDir}, args...)
+	// Override every writable default before caller flags, keeping subprocesses
+	// isolated even when they fail after configuration parsing.
+	directory := t.TempDir()
+	stateDir := filepath.Join(directory, "state")
+	outputPath := filepath.Join(directory, "metrics.prom")
+	commandArgs := append([]string{"--state-dir", stateDir, "--output", outputPath}, args...)
 	command := exec.Command(buildCLI(t), commandArgs...)
-	command.Dir = t.TempDir()
+	command.Dir = directory
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return string(output), 0
@@ -223,4 +261,47 @@ func runCLI(t *testing.T, args ...string) (string, int) {
 	}
 	t.Fatalf("run CLI: %v", fmt.Errorf("%w\n%s", err, output))
 	return "", -1
+}
+
+func startRuntimeCLI(t *testing.T, databasePath, stateDir, outputPath, interval string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
+	t.Helper()
+	command := exec.Command(buildCLI(t),
+		"--db", databasePath,
+		"--state-dir", stateDir,
+		"--output", outputPath,
+		"--interval", interval,
+	)
+	command.Dir = t.TempDir()
+	var stdout, stderr bytes.Buffer
+	command.Stdout = &stdout
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		t.Fatalf("start CLI: %v", err)
+	}
+	t.Cleanup(func() {
+		if command.ProcessState == nil {
+			_ = command.Process.Kill()
+			_ = command.Wait()
+		}
+	})
+	return command, &stdout, &stderr
+}
+
+func stopCLI(t *testing.T, command *exec.Cmd, stdout, stderr *bytes.Buffer, signal os.Signal) {
+	t.Helper()
+	if err := command.Process.Signal(signal); err != nil {
+		t.Fatalf("send %s to CLI: %v", signal, err)
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- command.Wait() }()
+	select {
+	case err := <-waited:
+		if err != nil {
+			t.Fatalf("CLI exit = %v; stdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+		}
+	case <-time.After(3 * time.Second):
+		_ = command.Process.Kill()
+		<-waited
+		t.Fatalf("CLI did not stop after %s; stdout:\n%s\nstderr:\n%s", signal, stdout, stderr)
+	}
 }

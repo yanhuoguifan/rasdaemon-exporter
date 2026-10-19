@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"rasdaemon-exporter/internal/collector"
 )
@@ -19,6 +20,9 @@ func TestDefaultConfigUsesDocumentedDatabasePath(t *testing.T) {
 	}
 	if config.SnapshotPath != collector.DefaultSnapshotPath {
 		t.Fatalf("default snapshot path = %q, want %q", config.SnapshotPath, collector.DefaultSnapshotPath)
+	}
+	if config.Interval != collector.DefaultInterval {
+		t.Fatalf("default interval = %s, want %s", config.Interval, collector.DefaultInterval)
 	}
 	if err := config.Validate(); err != nil {
 		t.Fatalf("validate default config: %v", err)
@@ -43,6 +47,7 @@ func TestConfigValidationRequiresAbsoluteNonemptyPath(t *testing.T) {
 				DatabasePath: test.path,
 				StateDir:     validPath + ".state",
 				SnapshotPath: collector.DefaultSnapshotPath,
+				Interval:     collector.DefaultInterval,
 			}
 			original := config
 			err := config.Validate()
@@ -75,6 +80,7 @@ func TestConfigValidationRequiresAbsoluteNonRootStateDirectory(t *testing.T) {
 				DatabasePath: filepath.Join(t.TempDir(), "events.db"),
 				StateDir:     test.path,
 				SnapshotPath: collector.DefaultSnapshotPath,
+				Interval:     collector.DefaultInterval,
 			}
 			err := config.Validate()
 			if (err != nil) != test.want {
@@ -102,6 +108,7 @@ func TestConfigValidationKeepsDatabaseOutsideStatePaths(t *testing.T) {
 				DatabasePath: test.path,
 				StateDir:     stateDir,
 				SnapshotPath: filepath.Join(t.TempDir(), "metrics.prom"),
+				Interval:     collector.DefaultInterval,
 			}
 			if err := config.Validate(); err == nil {
 				t.Fatalf("Validate() accepted database path overlapping state: %q", test.path)
@@ -126,7 +133,12 @@ func TestConfigValidationRequiresAbsoluteSnapshotPathWithoutCheckingFilesystem(t
 
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			config := collector.Config{DatabasePath: databasePath, StateDir: stateDir, SnapshotPath: test.path}
+			config := collector.Config{
+				DatabasePath: databasePath,
+				StateDir:     stateDir,
+				SnapshotPath: test.path,
+				Interval:     collector.DefaultInterval,
+			}
 			if err := config.Validate(); (err != nil) != test.want {
 				t.Fatalf("Validate() error = %v, wantError %t", err, test.want)
 			}
@@ -153,7 +165,12 @@ func TestConfigValidationKeepsSnapshotOutsideSourceAndStatePaths(t *testing.T) {
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			config := collector.Config{DatabasePath: databasePath, StateDir: stateDir, SnapshotPath: test.path}
+			config := collector.Config{
+				DatabasePath: databasePath,
+				StateDir:     stateDir,
+				SnapshotPath: test.path,
+				Interval:     collector.DefaultInterval,
+			}
 			if err := config.Validate(); err == nil {
 				t.Fatalf("Validate() accepted conflicting snapshot path %q", test.path)
 			}
@@ -188,10 +205,26 @@ func TestConfigValidationKeepsPreviousSnapshotOutsideSourceAndStatePaths(t *test
 				DatabasePath: test.databasePath,
 				StateDir:     test.stateDir,
 				SnapshotPath: test.snapshotPath,
+				Interval:     collector.DefaultInterval,
 			}
 			if err := config.Validate(); err == nil {
 				t.Fatalf("Validate() accepted previous snapshot path %q overlapping %s", test.snapshotPath+".prev", test.name)
 			}
 		})
+	}
+}
+
+func TestConfigValidationRequiresPositiveInterval(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "events.db")
+	for _, interval := range []time.Duration{0, -time.Second} {
+		config := collector.Config{
+			DatabasePath: databasePath,
+			StateDir:     filepath.Join(t.TempDir(), "state"),
+			SnapshotPath: filepath.Join(t.TempDir(), "metrics.prom"),
+			Interval:     interval,
+		}
+		if err := config.Validate(); err == nil {
+			t.Errorf("Validate() accepted interval %s", interval)
+		}
 	}
 }

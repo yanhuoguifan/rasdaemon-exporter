@@ -175,6 +175,7 @@ func TestRunAcquiresStateLockBeforeOpeningSQLite(t *testing.T) {
 		DatabasePath: databasePath,
 		StateDir:     stateDir,
 		SnapshotPath: filepath.Join(t.TempDir(), "metrics.prom"),
+		Interval:     collector.DefaultInterval,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("validate test configuration: %v", err)
@@ -206,6 +207,7 @@ func TestRunRejectsUnsafeExistingStateDirectoryWithoutChangingIt(t *testing.T) {
 				DatabasePath: missingDatabase,
 				StateDir:     stateDir,
 				SnapshotPath: filepath.Join(t.TempDir(), "metrics.prom"),
+				Interval:     collector.DefaultInterval,
 			}
 			if err := cfg.Validate(); err != nil {
 				t.Fatalf("validate test configuration: %v", err)

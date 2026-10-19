@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -17,10 +18,6 @@ const (
 	pollRows  = 6000
 	pollTime  = 2 * time.Second
 )
-
-// ErrPublicationUnavailable keeps the CLI from claiming to export metrics
-// before the durable textfile publication path is implemented.
-var ErrPublicationUnavailable = errors.New("metrics publication is not implemented")
 
 // ErrNoCollectors reports that the database has no table supported by this build.
 var ErrNoCollectors = errors.New("source database has no supported tables")
@@ -226,6 +223,9 @@ func (e *Engine) CollectAndCommit(ctx context.Context) (collectErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if e.devlink.LastID == e.committed.Tables["devlink_event"] {
+		return nil
+	}
 	candidate, err := e.committed.Advance(map[string]int64{"devlink_event": e.devlink.LastID})
 	if err != nil {
 		return err
@@ -320,11 +320,36 @@ func closeResources(db *sql.DB, lock *os.File) error {
 	return closeErr
 }
 
-// Run remains a startup check until metrics can be durably published.
-func Run(ctx context.Context, cfg Config) error {
+// Run restores persisted data, collects immediately, then waits between rounds.
+// The caller must validate cfg before calling Run.
+func Run(ctx context.Context, cfg Config) (runErr error) {
 	engine, err := OpenEngine(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	return errors.Join(ErrPublicationUnavailable, engine.Close())
+	defer func() {
+		runErr = errors.Join(runErr, engine.Close())
+	}()
+	if err := engine.Restore(ctx); err != nil {
+		return err
+	}
+	slog.Info("Starting collection loop",
+		"database", cfg.DatabasePath,
+		"output", cfg.SnapshotPath,
+		"interval", cfg.Interval.String(),
+	)
+	timer := time.NewTimer(cfg.Interval)
+	defer timer.Stop()
+	for {
+		if err := engine.CollectAndCommit(ctx); err != nil {
+			return err
+		}
+		timer.Reset(cfg.Interval)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }

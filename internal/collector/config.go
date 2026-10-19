@@ -4,22 +4,27 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"time"
 )
 
 // DefaultDatabasePath is the rasdaemon database location on a standard host.
 const DefaultDatabasePath = "/var/lib/rasdaemon/ras-mc_event.db"
 
-// DefaultStateDir stores the exporter's lock and future durable state.
+// DefaultStateDir stores the exporter's lock and durable collection state.
 const DefaultStateDir = "/var/lib/rasdaemon-exporter"
 
 // DefaultSnapshotPath is the textfile collector output location.
 const DefaultSnapshotPath = "/var/lib/node_exporter/textfile_collector/rasdaemon.prom"
 
-// Config contains the source settings needed by the runtime bootstrap.
+// DefaultInterval is the delay between completed collection rounds.
+const DefaultInterval = 5 * time.Second
+
+// Config contains the source, snapshot, and scheduling settings for the collector.
 type Config struct {
 	DatabasePath string
 	StateDir     string
 	SnapshotPath string
+	Interval     time.Duration
 }
 
 // DefaultConfig returns settings for the standard rasdaemon installation.
@@ -28,11 +33,15 @@ func DefaultConfig() Config {
 		DatabasePath: DefaultDatabasePath,
 		StateDir:     DefaultStateDir,
 		SnapshotPath: DefaultSnapshotPath,
+		Interval:     DefaultInterval,
 	}
 }
 
-// Validate rejects empty, relative, and lexically conflicting configured paths.
+// Validate rejects invalid collection intervals and empty, relative, or conflicting paths.
 func (c Config) Validate() error {
+	if c.Interval <= 0 {
+		return errors.New("collection interval must be greater than zero")
+	}
 	if c.DatabasePath == "" {
 		return errors.New("database path must not be empty")
 	}

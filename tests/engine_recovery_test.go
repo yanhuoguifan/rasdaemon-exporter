@@ -166,12 +166,101 @@ func TestEngineRestoreInitializesAndCommitsCumulativeCounters(t *testing.T) {
 	want := map[collector.DevlinkLabels]uint64{recoveryLabels("timeout"): 2}
 	assertRecoveryPair(t, fixture, 2, 2, want)
 
-	// A successful round with no new rows advances the pair without changing
-	// the cursor or cumulative counter.
-	if err := engine.CollectAndCommit(context.Background()); err != nil {
-		t.Fatalf("empty CollectAndCommit() error = %v", err)
+	paths := []string{fixture.snapshotPath, filepath.Join(fixture.config.StateDir, "state.json")}
+	contents := make(map[string][]byte, len(paths))
+	infos := make(map[string]os.FileInfo, len(paths))
+	for _, path := range paths {
+		contents[path], infos[path] = readCommittedFile(t, path)
 	}
-	assertRecoveryPair(t, fixture, 3, 2, want)
+	for round := 0; round < 3; round++ {
+		if err := engine.CollectAndCommit(context.Background()); err != nil {
+			t.Fatalf("empty CollectAndCommit() round %d: %v", round+1, err)
+		}
+	}
+	for _, path := range paths {
+		assertCommittedFileUnchanged(t, path, contents[path], infos[path])
+	}
+	if _, err := os.Lstat(previousSnapshotPath(fixture)); !os.IsNotExist(err) {
+		t.Fatalf("idle rounds created a previous snapshot: %v", err)
+	}
+	assertRecoveryPair(t, fixture, 2, 2, want)
+}
+
+func TestEngineBacklogDrainsAcrossRoundsWithoutDatabaseWrites(t *testing.T) {
+	const totalRows = 6501
+	events := make([]devlinkFixture, totalRows)
+	for i := range events {
+		events[i] = recoveryEvent(int64(i+1), "backlog")
+	}
+	fixture := newEngineRecoveryFixture(t, events...)
+	databaseBefore := fileDigest(t, fixture.databasePath)
+	engine := restoreRecoveryEngine(t, fixture)
+	generation := uint64(1)
+	var previousCursor int64
+	for rounds := 0; previousCursor < totalRows; rounds++ {
+		if rounds > totalRows/500+1 {
+			t.Fatal("fixed backlog did not drain across bounded rounds")
+		}
+		if err := engine.CollectAndCommit(context.Background()); err != nil {
+			t.Fatalf("collect backlog round %d: %v", rounds+1, err)
+		}
+		state, err := collector.LoadState(fixture.config.StateDir)
+		if err != nil {
+			t.Fatalf("load state after backlog round %d: %v", rounds+1, err)
+		}
+		if state.Tables["devlink_event"] <= previousCursor {
+			t.Fatalf("backlog round %d did not advance cursor: before=%d after=%d",
+				rounds+1, previousCursor, state.Tables["devlink_event"])
+		}
+		previousCursor = state.Tables["devlink_event"]
+		generation = state.Generation
+	}
+	if generation < 3 {
+		t.Fatalf("fixed backlog drained in generation %d; want multiple committed rounds", generation)
+	}
+	want := map[collector.DevlinkLabels]uint64{recoveryLabels("backlog"): totalRows}
+	assertRecoveryPair(t, fixture, generation, totalRows, want)
+	if got := fileDigest(t, fixture.databasePath); got != databaseBefore {
+		t.Fatal("collection changed the fixed SQLite source")
+	}
+
+	snapshotBytes, err := os.ReadFile(fixture.snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(fixture.config.StateDir, "state.json")
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := engine.CollectAndCommit(context.Background()); err != nil {
+		t.Fatalf("collect idle round after draining fixed database: %v", err)
+	}
+	if got, err := os.ReadFile(fixture.snapshotPath); err != nil || string(got) != string(snapshotBytes) {
+		t.Fatalf("idle round changed drained snapshot: read error %v", err)
+	}
+	if got, err := os.ReadFile(statePath); err != nil || string(got) != string(stateBytes) {
+		t.Fatalf("idle round changed drained state: read error %v", err)
+	}
+	if _, err := os.Lstat(previousSnapshotPath(fixture)); !os.IsNotExist(err) {
+		t.Fatalf("idle round created previous snapshot: %v", err)
+	}
+}
+
+func TestEngineIdleRoundDoesNotAdvanceMaximumGeneration(t *testing.T) {
+	fixture := newEngineRecoveryFixture(t)
+	identity := sourceIdentityForTest(t, fixture.databasePath)
+	saveRecoveryState(t, fixture, math.MaxUint64, 0, identity, nil)
+	saveRecoverySnapshot(t, fixture.snapshotPath, math.MaxUint64)
+	engine := restoreRecoveryEngine(t, fixture)
+
+	if err := engine.CollectAndCommit(context.Background()); err != nil {
+		t.Fatalf("idle collection at maximum generation: %v", err)
+	}
+	assertRecoveryPair(t, fixture, math.MaxUint64, 0, map[collector.DevlinkLabels]uint64{})
+	if _, err := os.Lstat(previousSnapshotPath(fixture)); !os.IsNotExist(err) {
+		t.Fatalf("idle collection created previous snapshot: %v", err)
+	}
 }
 
 func TestEngineCollectionRequiresRestore(t *testing.T) {
