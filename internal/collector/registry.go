@@ -1,21 +1,48 @@
 package collector
 
-// supportedTableNames lists only tables with a complete projection and metric
-// contract. Unknown database tables remain outside the collection path.
-var supportedTableNames = []string{"devlink_event"}
+import (
+	"context"
+	"database/sql"
+	"slices"
+)
 
-// matchingSupportedTables returns registered collectors whose tables exist.
-// Keeping discovery and registration separate prevents unknown tables from
-// being treated as supported merely because they are present in the database.
-func matchingSupportedTables(databaseTables []string) []string {
-	var matches []string
-	for _, supported := range supportedTableNames {
-		for _, discovered := range databaseTables {
-			if supported == discovered {
-				matches = append(matches, supported)
-				break
-			}
+// tableCollector combines one table's batch reader with its metric codec.
+type tableCollector interface {
+	MetricCodec
+	CollectBatch(context.Context, *sql.DB, int) (int, error)
+}
+
+// tableEntry binds a registered table name to its collector-owned cursor.
+type tableEntry struct {
+	Name      string
+	Cursor    *int64
+	Collector tableCollector
+}
+
+// newTableEntries constructs registered collectors whose tables were discovered.
+func newTableEntries(discovered []string) []tableEntry {
+	devlink := &DevlinkCollector{}
+	mc := &MCCollector{}
+	registered := []tableEntry{
+		{Name: "devlink_event", Cursor: &devlink.LastID, Collector: devlink},
+		{Name: "mc_event", Cursor: &mc.LastID, Collector: mc},
+	}
+	var entries []tableEntry
+	for _, table := range registered {
+		if slices.Contains(discovered, table.Name) {
+			entries = append(entries, table)
 		}
 	}
-	return matches
+	return entries
+}
+
+// metricFamilyOwners maps each uniquely registered metric family to its table.
+func metricFamilyOwners(entries []tableEntry) map[string]int {
+	owners := make(map[string]int)
+	for index, entry := range entries {
+		for _, family := range entry.Collector.ExportMetrics() {
+			owners[family.Name] = index
+		}
+	}
+	return owners
 }

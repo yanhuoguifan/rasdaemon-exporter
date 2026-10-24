@@ -10,6 +10,6 @@ make build
 ```
 
 The tests use temporary SQLite databases and temporary files. They cover the
-currently implemented devlink collection path, snapshots, state recovery,
+implemented table collectors, snapshots, state recovery,
 locking, CLI behavior, and the collection loop. They do not access the host's
 rasdaemon database, inject hardware faults, or test unimplemented event tables.

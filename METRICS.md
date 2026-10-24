@@ -1,7 +1,7 @@
 # Metrics
 
-This document describes the metric contract. At present, only the devlink
-counter is implemented and emitted. The other 11 event counters and six
+This document describes the metric contract. The devlink counter and two MC
+counters are implemented. The other nine event counters and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -21,14 +21,25 @@ over the query window, not necessarily when the physical events occurred. A
 series appears only after a matching row is consumed; unseen combinations are
 not emitted as zero.
 
-## Implemented metric
+## Implemented metrics
 
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
 | `rasdaemon_devlink_health_events_total` | `devlink_event` | `bus_name, dev_name, driver_name, reporter_name, msg` | 1 per row |
+| `rasdaemon_memory_errors_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | `err_count` |
+| `rasdaemon_memory_events_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | 1 per row |
 
-Before grouping, each run of invalid UTF-8 bytes in `msg` is replaced by
-`<invalid>`.
+For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
+before grouping.
+
+For MC, `error_type` retains the `err_type` source text; SQL NULL becomes an
+empty label. `dimm` is the raw `label` text. Missing or negative `mc` and layer
+values become `unknown`. Invalid UTF-8 runs in `err_msg` become `<invalid>`.
+Labeled internal numeric locations in `err_msg` (address, offset, row, column,
+and bank coordinates) become `<omitted>`;
+`driver_detail` is not exported. Zero `err_count` adds zero errors but one
+event; NULL or negative counts are rejected. Both MC counters use the same
+label groups, including zero-valued error samples.
 
 ## Planned event counters
 
@@ -36,8 +47,6 @@ These additional mappings are not implemented and are not available to scrape.
 
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
-| `rasdaemon_memory_errors_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | `err_count` |
-| `rasdaemon_memory_events_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | 1 per row |
 | `rasdaemon_pcie_aer_events_total` | `aer_event` | `dev_name, err_type, err_msg, device_name` | 1 per row |
 | `rasdaemon_mce_events_total` | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | 1 per row |
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
@@ -50,14 +59,6 @@ These additional mappings are not implemented and are not available to scrape.
 
 ### Label mappings
 
-- **`mc_event`:** `error_type` maps `Corrected` to `ce`, `Uncorrected` to `ue`,
-  `Fatal` to `fatal`, `Deferred` to `deferred`, and `Info` to `info`; other or
-  missing values map to `unknown`. A zero `err_count` adds zero errors but still
-  one event. `dimm` is
-  the source `label` text, without DIMM inference. `mc` and layer labels use
-  the source location fields; missing or negative locations are `unknown`.
-  `err_msg` retains the source description while omitting the approved
-  internal address/row/column location values. `driver_detail` is not exported.
 - **`aer_event`:** `dev_name` and `err_type` retain their source values;
   `err_msg` omits internal address/row/column values and a trailing TLP Header
   payload. `device_name` is a best-effort current local PCI display name looked
@@ -96,7 +97,8 @@ These additional mappings are not implemented and are not available to scrape.
 
 ## Limits
 
-- The implemented devlink collector permits at most 10,000 series.
+- Each implemented table collector permits at most 10,000 distinct label groups.
+  MC exports two counter series per group.
 - Snapshot counters are exact through `2^53`, inclusive; larger values are
   rejected because Prometheus snapshot values use floating-point numbers.
 

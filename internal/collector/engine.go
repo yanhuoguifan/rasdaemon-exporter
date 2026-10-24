@@ -12,17 +12,12 @@ import (
 	"time"
 )
 
-// Shared engine budgets; pollRows and pollTime bound one collection round.
-const (
-	batchRows = 500
-	pollRows  = 6000
-	pollTime  = 2 * time.Second
-)
+const batchRows = 500
 
 // ErrNoCollectors reports that the database has no table supported by this build.
 var ErrNoCollectors = errors.New("source database has no supported tables")
 
-// Engine owns the read-only source and the in-memory devlink counters.
+// Engine owns the read-only source and the active table collectors.
 // The caller serializes all method calls; this type does not start goroutines.
 type Engine struct {
 	db           *sql.DB
@@ -30,7 +25,7 @@ type Engine struct {
 	databasePath string
 	stateDir     string
 	snapshotPath string
-	devlink      DevlinkCollector
+	tables       []tableEntry
 	committed    *State
 	closed       bool
 }
@@ -66,7 +61,8 @@ func OpenEngine(ctx context.Context, cfg Config) (_ *Engine, openErr error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(matchingSupportedTables(tables)) == 0 {
+	entries := newTableEntries(tables)
+	if len(entries) == 0 {
 		return nil, ErrNoCollectors
 	}
 	return &Engine{
@@ -75,6 +71,7 @@ func OpenEngine(ctx context.Context, cfg Config) (_ *Engine, openErr error) {
 		databasePath: cfg.DatabasePath,
 		stateDir:     stateDir,
 		snapshotPath: filepath.Clean(cfg.SnapshotPath),
+		tables:       entries,
 	}, nil
 }
 
@@ -121,11 +118,10 @@ func (e *Engine) Restore(ctx context.Context) (restoreErr error) {
 	if err != nil {
 		return err
 	}
-	cursor, err := devlinkCursor(state)
-	if err != nil {
+	if err := state.CheckSource(identity); err != nil {
 		return err
 	}
-	if err := state.CheckSource(identity); err != nil {
+	if err := validateRegisteredCursors(state, e.tables); err != nil {
 		return err
 	}
 	for _, path := range []string{e.snapshotPath, e.snapshotBackupPath()} {
@@ -139,8 +135,7 @@ func (e *Engine) Restore(ctx context.Context) (restoreErr error) {
 		if candidateErr != nil || candidate.Generation != state.Generation {
 			continue
 		}
-		var recovered DevlinkCollector
-		if err := recovered.RestoreMetrics(candidate.Families); err != nil {
+		if err := e.restoreTables(candidate, state); err != nil {
 			if path == e.snapshotPath {
 				snapshotErr = err
 			}
@@ -151,8 +146,6 @@ func (e *Engine) Restore(ctx context.Context) (restoreErr error) {
 				return err
 			}
 		}
-		recovered.LastID = cursor
-		e.devlink = recovered
 		e.committed = state
 		removeRegularFile(e.snapshotBackupPath())
 		return nil
@@ -164,13 +157,53 @@ func (e *Engine) Restore(ctx context.Context) (restoreErr error) {
 		state.Generation, snapshot.Generation)
 }
 
+// restoreTables routes one matching snapshot to the active collectors and
+// replaces their counts and cursors, enrolling an empty table at cursor zero.
+func (e *Engine) restoreTables(snapshot *Snapshot, state *State) error {
+	owners := metricFamilyOwners(e.tables)
+	families := make([][]CounterFamily, len(e.tables))
+	for _, family := range snapshot.Families {
+		owner, exists := owners[family.Name]
+		if !exists {
+			return fmt.Errorf("snapshot contains unregistered metric family %q", family.Name)
+		}
+		families[owner] = append(families[owner], family)
+	}
+	for i := range e.tables {
+		table := &e.tables[i]
+		cursor, exists := state.Tables[table.Name]
+		if !exists && len(families[i]) != 0 {
+			return fmt.Errorf("snapshot contains metric families for table %q without a saved cursor", table.Name)
+		}
+		if err := table.Collector.RestoreMetrics(families[i]); err != nil {
+			return fmt.Errorf("restore metrics for table %q: %w", table.Name, err)
+		}
+		*table.Cursor = cursor
+	}
+	return nil
+}
+
+// validateRegisteredCursors rejects persisted table names no longer registered.
+func validateRegisteredCursors(state *State, tables []tableEntry) error {
+	registered := make(map[string]struct{}, len(tables))
+	for _, table := range tables {
+		registered[table.Name] = struct{}{}
+	}
+	for name := range state.Tables {
+		if _, exists := registered[name]; !exists {
+			return fmt.Errorf("state contains unregistered table cursor %q", name)
+		}
+	}
+	return nil
+}
+
 // initialize creates generation one, optionally writing its missing empty snapshot first.
 func (e *Engine) initialize(snapshotMissing bool) error {
 	identity, err := databaseIdentity(e.databasePath)
 	if err != nil {
 		return err
 	}
-	state := NewState(identity, map[string]int64{"devlink_event": 0})
+	state := NewState(identity, e.currentCursors())
 	if snapshotMissing {
 		if err := SaveSnapshot(e.snapshotPath, &Snapshot{Generation: state.Generation}); err != nil {
 			return err
@@ -184,21 +217,14 @@ func (e *Engine) initialize(snapshotMissing bool) error {
 	return nil
 }
 
-// poll applies complete batches until a row or time budget is reached.
+// poll reads one batch from each active table.
 func (e *Engine) poll(ctx context.Context) error {
-	started := time.Now()
-	rowsRead := 0
-	for rowsRead < pollRows && time.Since(started) < pollTime {
+	for _, table := range e.tables {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rows, err := e.devlink.CollectBatch(ctx, e.db, batchRows)
-		if err != nil {
+		if _, err := table.Collector.CollectBatch(ctx, e.db, batchRows); err != nil {
 			return err
-		}
-		rowsRead += rows
-		if rows < batchRows {
-			return nil
 		}
 	}
 	return nil
@@ -223,10 +249,18 @@ func (e *Engine) CollectAndCommit(ctx context.Context) (collectErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if e.devlink.LastID == e.committed.Tables["devlink_event"] {
+	cursors := e.currentCursors()
+	advanced := false
+	for table, cursor := range cursors {
+		if cursor != e.committed.Tables[table] {
+			advanced = true
+			break
+		}
+	}
+	if !advanced {
 		return nil
 	}
-	candidate, err := e.committed.Advance(map[string]int64{"devlink_event": e.devlink.LastID})
+	candidate, err := e.committed.Advance(cursors)
 	if err != nil {
 		return err
 	}
@@ -236,7 +270,10 @@ func (e *Engine) CollectAndCommit(ctx context.Context) (collectErr error) {
 // commit writes the previous metrics generation, the next metrics generation,
 // then its matching state; it removes the backup only after both new files save.
 func (e *Engine) commit(candidate *State) error {
-	snapshot := &Snapshot{Generation: candidate.Generation, Families: e.devlink.ExportMetrics()}
+	snapshot := &Snapshot{Generation: candidate.Generation}
+	for _, table := range e.tables {
+		snapshot.Families = append(snapshot.Families, table.Collector.ExportMetrics()...)
+	}
 	if e.committed != nil {
 		previous, err := LoadSnapshot(e.snapshotPath)
 		if err != nil {
@@ -265,6 +302,14 @@ func (e *Engine) snapshotBackupPath() string {
 	return e.snapshotPath + ".prev"
 }
 
+func (e *Engine) currentCursors() map[string]int64 {
+	cursors := make(map[string]int64, len(e.tables))
+	for _, table := range e.tables {
+		cursors[table.Name] = *table.Cursor
+	}
+	return cursors
+}
+
 // Close releases SQLite before releasing the state-directory lock.
 func (e *Engine) Close() error {
 	if e == nil || e.closed {
@@ -280,17 +325,6 @@ func AcquireLock(stateDir string) (*os.File, error) {
 		return nil, errors.New("state directory must be an absolute non-root path")
 	}
 	return acquireFileLock(filepath.Join(stateDir, "collector.lock"))
-}
-
-func devlinkCursor(state *State) (int64, error) {
-	if len(state.Tables) != 1 {
-		return 0, errors.New("state must contain exactly the enabled devlink_event cursor")
-	}
-	cursor, exists := state.Tables["devlink_event"]
-	if !exists {
-		return 0, errors.New("state is missing the devlink_event cursor")
-	}
-	return cursor, nil
 }
 
 func databaseIdentity(path string) (SourceIdentity, error) {

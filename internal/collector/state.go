@@ -96,10 +96,12 @@ func (s *State) Advance(cursors map[string]int64) (*State, error) {
 		next.Tables[table] = id
 	}
 	for table, id := range cursors {
-		previous, exists := s.Tables[table]
-		if !exists {
-			return nil, fmt.Errorf("cannot advance unregistered table %q", table)
+		if table == "" {
+			return nil, errors.New("cursor table name must not be empty")
 		}
+		// A newly enabled table starts at cursor zero. The engine verifies that
+		// supplied table names belong to its active registry.
+		previous := s.Tables[table]
 		if id < previous {
 			return nil, fmt.Errorf("cursor for table %q moved backwards: %d to %d", table, previous, id)
 		}

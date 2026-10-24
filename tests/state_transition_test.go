@@ -66,13 +66,35 @@ func TestStateAdvanceAcceptsEmptyHeartbeatAndMaximumID(t *testing.T) {
 	}
 }
 
+func TestStateAdvanceAddsRegisteredTableFromZero(t *testing.T) {
+	current := stateForTransitions()
+	delete(current.Tables, "mc_event")
+	before := cloneState(current)
+
+	first, err := current.Advance(map[string]int64{"mc_event": 0})
+	if err != nil {
+		t.Fatalf("Advance() with new table at zero: %v", err)
+	}
+	if first.Tables["mc_event"] != 0 || first.Generation != current.Generation+1 {
+		t.Fatalf("first state with new table = %#v; want mc_event=0 and next generation", first)
+	}
+	if !reflect.DeepEqual(current, before) {
+		t.Fatalf("Advance() mutated old state: got %#v, want %#v", current, before)
+	}
+
+	next, err := first.Advance(map[string]int64{"mc_event": 3})
+	if err != nil || next.Tables["mc_event"] != 3 {
+		t.Fatalf("Advance() after new table enrollment = (%#v, %v); want cursor 3", next, err)
+	}
+}
+
 func TestStateAdvanceRejectsInvalidUpdatesWithoutMutation(t *testing.T) {
 	tests := []struct {
 		name    string
 		state   func() *collector.State
 		updates map[string]int64
 	}{
-		{name: "unknown table", state: stateForTransitions, updates: map[string]int64{"missing": 1}},
+		{name: "empty table name", state: stateForTransitions, updates: map[string]int64{"": 1}},
 		{name: "negative cursor", state: stateForTransitions, updates: map[string]int64{"devlink_event": -1}},
 		{name: "backwards cursor", state: stateForTransitions, updates: map[string]int64{"devlink_event": 11}},
 		{
