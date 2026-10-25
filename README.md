@@ -4,8 +4,8 @@
 and writes cumulative Prometheus metrics for node_exporter's textfile
 collector. It does not expose an HTTP endpoint.
 
-The current collector supports `devlink_event` and `mc_event`. Other rasdaemon
-event tables are not exported yet. The collector is designed against the
+The current collector supports `devlink_event`, `mc_event`, and `aer_event`.
+Other rasdaemon event tables are not exported yet. The collector is designed against the
 upstream rasdaemon v0.8.4 schema; other versions are best-effort when their
 database fields match.
 
@@ -19,6 +19,8 @@ kernel RAS events → rasdaemon → SQLite → rasdaemon-exporter → .prom file
 - Go 1.23 or newer, GNU Make, CGO, and a C compiler to build it.
 - rasdaemon writing an existing SQLite database with at least one supported table.
 - node_exporter with its textfile collector enabled.
+- Optional local `pci.ids` at `/usr/share/hwdata/pci.ids` or
+  `/usr/share/misc/pci.ids` for AER device names; unavailable names are `unknown`.
 
 The exporter opens the database read-only. It does not configure rasdaemon,
 enable event recording, create the database, or remove its records.
@@ -114,7 +116,6 @@ the collector; they preserve restart continuity.
 The following sources and collector metrics are planned, but are not currently
 implemented. No implementation order or release date is committed.
 
-- `aer_event`: PCIe AER events.
 - `mce_record`: Machine Check records.
 - `arm_event`: ARM processor events.
 - `extlog_event`: firmware-reported memory events.

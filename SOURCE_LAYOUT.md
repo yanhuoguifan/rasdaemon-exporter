@@ -10,6 +10,7 @@
 │   ├── registry.go
 │   ├── table_devlink_event.go
 │   ├── table_mc_event.go
+│   ├── table_aer_event.go
 │   ├── metrics.go
 │   ├── state.go
 │   └── files.go

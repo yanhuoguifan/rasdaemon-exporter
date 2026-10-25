@@ -1,7 +1,7 @@
 # Metrics
 
-This document describes the metric contract. The devlink counter and two MC
-counters are implemented. The other nine event counters and six
+This document describes the metric contract. The devlink, AER, and two MC
+counters are implemented. The other eight event counters and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -11,11 +11,12 @@ exporter adds no `node` or `scope` label. Configure Prometheus to add a stable
 
 ## Common counter and label rules
 
-Text labels use source text unless a table-specific mapping below says
-otherwise. SQL NULL becomes an empty label unless explicitly mapped. Rows with
-the same complete event-key label tuple accumulate together; auxiliary device
-names and models do not change that persistent grouping key. Counters describe
-recorded reports, not current fault state, and do not include event timestamps.
+Text labels preserve source values unless documented otherwise.
+SQL NULL becomes an empty label. Counters accumulate by label set.
+Table-specific mappings are listed below.
+
+Counters describe recorded reports, not current fault state, and do not include
+event timestamps.
 Startup catch-up can count older rows, so counter growth measures rows consumed
 over the query window, not necessarily when the physical events occurred. A
 series appears only after a matching row is consumed; unseen combinations are
@@ -28,6 +29,7 @@ not emitted as zero.
 | `rasdaemon_devlink_health_events_total` | `devlink_event` | `bus_name, dev_name, driver_name, reporter_name, msg` | 1 per row |
 | `rasdaemon_memory_errors_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | `err_count` |
 | `rasdaemon_memory_events_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | 1 per row |
+| `rasdaemon_pcie_aer_events_total` | `aer_event` | `dev_name, err_type, err_msg, device_name` | 1 per row |
 
 For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
 before grouping.
@@ -41,13 +43,23 @@ and bank coordinates) become `<omitted>`;
 event; NULL or negative counts are rejected. Both MC counters use the same
 label groups, including zero-valued error samples.
 
+For AER, `dev_name` and `err_type` retain source text. Invalid UTF-8 runs in
+`err_msg` become `<invalid>`; internal numeric locations and trailing TLP Header
+payloads are omitted. One row counts as one report, not one count per error bit.
+Device names are resolved without a BDF cache, using only the current sysfs
+`vendor` and `device` attributes and a local `pci.ids` file. PCI configuration
+space is never read. Events at or before the current host boot time, invalid
+timestamps, and failed lookups use `unknown`; already saved names are restored
+unchanged. Timestamp-based eligibility assumes a consistent system clock.
+Names are best-effort current descriptions, not event-time hardware identity:
+hotplug can race a lookup, and name changes can create a new counter series.
+
 ## Planned event counters
 
 These additional mappings are not implemented and are not available to scrape.
 
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
-| `rasdaemon_pcie_aer_events_total` | `aer_event` | `dev_name, err_type, err_msg, device_name` | 1 per row |
 | `rasdaemon_mce_events_total` | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | 1 per row |
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
 | `rasdaemon_firmware_memory_events_total` | `extlog_event` | `etype, severity, fru_id, fru_text` | 1 per row; not `error_count` |
@@ -59,11 +71,6 @@ These additional mappings are not implemented and are not available to scrape.
 
 ### Label mappings
 
-- **`aer_event`:** `dev_name` and `err_type` retain their source values;
-  `err_msg` omits internal address/row/column values and a trailing TLP Header
-  payload. `device_name` is a best-effort current local PCI display name looked
-  up from the source BDF; it is `unknown` when unavailable and is not an
-  event-time identity. No error-bit or severity expansion is performed.
 - **`mce_record`:** source integer fields use decimal text, not decoded vendor
   names or a new fault taxonomy. `error_msg`, `mcastatus_msg`, and `mc_location`
   omit internal addresses, row/column values, syndrome numbers, and dynamic

@@ -23,9 +23,11 @@ type tableEntry struct {
 func newTableEntries(discovered []string) []tableEntry {
 	devlink := &DevlinkCollector{}
 	mc := &MCCollector{}
+	aer := &AERCollector{}
 	registered := []tableEntry{
 		{Name: "devlink_event", Cursor: &devlink.LastID, Collector: devlink},
 		{Name: "mc_event", Cursor: &mc.LastID, Collector: mc},
+		{Name: "aer_event", Cursor: &aer.LastID, Collector: aer},
 	}
 	var entries []tableEntry
 	for _, table := range registered {
