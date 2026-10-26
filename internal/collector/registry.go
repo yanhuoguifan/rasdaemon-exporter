@@ -23,11 +23,18 @@ type tableEntry struct {
 func newTableEntries(discovered []string) []tableEntry {
 	devlink := &DevlinkCollector{}
 	mc := &MCCollector{}
-	aer := &AERCollector{}
+	bootTime := readKernelBootTime()
+	aer := &AERCollector{
+		DeviceResolver: &AERDeviceResolver{BootTime: bootTime},
+	}
+	diskErrors := &DiskErrorCollector{
+		DeviceResolver: &DiskDeviceResolver{BootTime: bootTime},
+	}
 	registered := []tableEntry{
 		{Name: "devlink_event", Cursor: &devlink.LastID, Collector: devlink},
 		{Name: "mc_event", Cursor: &mc.LastID, Collector: mc},
 		{Name: "aer_event", Cursor: &aer.LastID, Collector: aer},
+		{Name: "disk_errors", Cursor: &diskErrors.LastID, Collector: diskErrors},
 	}
 	var entries []tableEntry
 	for _, table := range registered {

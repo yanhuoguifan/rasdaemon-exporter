@@ -138,6 +138,28 @@ func TestAERCollectorAccumulatesRawLabelsAndCompactsMessages(t *testing.T) {
 	}
 }
 
+func TestAERCollectorDoesNotInitializeResolverDuringCollection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "aer-events.db")
+	createAERDatabase(t, path, aerTestRow{
+		id: 1, timestamp: "2000-01-01 00:00:00 +0000", devName: "0000:03:00.0",
+		errType: "Corrected", errMsg: "Receiver Error",
+	})
+	aer := collector.AERCollector{}
+	if rows, err := aer.CollectBatch(context.Background(), openAERDatabase(t, path), 1); err != nil || rows != 1 {
+		t.Fatalf("CollectBatch() = (%d, %v), want (1, nil)", rows, err)
+	}
+	if aer.DeviceResolver != nil {
+		t.Fatal("CollectBatch initialized DeviceResolver; registry construction must do that")
+	}
+	want := map[collector.AERLabels]uint64{{
+		DevName: "0000:03:00.0", ErrType: "Corrected", ErrMsg: "Receiver Error",
+		DeviceName: "unknown",
+	}: 1}
+	if !reflect.DeepEqual(aer.Counts, want) {
+		t.Fatalf("counts = %#v, want %#v", aer.Counts, want)
+	}
+}
+
 func TestAERDeviceResolverUsesFreshSysfsIDsAndNeverConfig(t *testing.T) {
 	boot := time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC)
 	bdf := "0000:03:00.0"

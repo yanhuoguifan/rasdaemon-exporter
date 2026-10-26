@@ -1,7 +1,7 @@
 # Metrics
 
-This document describes the metric contract. The devlink, AER, and two MC
-counters are implemented. The other eight event counters and six
+This document describes the metric contract. The devlink, AER, block I/O, and two MC
+counters are implemented. The other seven event counters and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -30,6 +30,7 @@ not emitted as zero.
 | `rasdaemon_memory_errors_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | `err_count` |
 | `rasdaemon_memory_events_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | 1 per row |
 | `rasdaemon_pcie_aer_events_total` | `aer_event` | `dev_name, err_type, err_msg, device_name` | 1 per row |
+| `rasdaemon_block_io_error_events_total` | `disk_errors` | `dev, error, rwbs, device_name, device_model` | 1 per row |
 
 For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
 before grouping.
@@ -54,6 +55,15 @@ unchanged. Timestamp-based eligibility assumes a consistent system clock.
 Names are best-effort current descriptions, not event-time hardware identity:
 hotplug can race a lookup, and name changes can create a new counter series.
 
+For block I/O, `dev`, `error`, and `rwbs` retain source text, except invalid
+UTF-8 runs in `error` become `<invalid>`. Device lookup uses current sysfs data
+without caching and follows the same boot-time and snapshot-name rules as AER.
+`device_name` is the kernel block-device name; partitions keep their own name
+and use the parent disk's model. Missing model information is `unknown`.
+Logical devices are not traced through their backing disks. No device nodes
+are opened or hardware commands issued. Sector, length, and command fields
+are not exported.
+
 ## Planned event counters
 
 These additional mappings are not implemented and are not available to scrape.
@@ -63,7 +73,6 @@ These additional mappings are not implemented and are not available to scrape.
 | `rasdaemon_mce_events_total` | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | 1 per row |
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
 | `rasdaemon_firmware_memory_events_total` | `extlog_event` | `etype, severity, fru_id, fru_text` | 1 per row; not `error_count` |
-| `rasdaemon_block_io_error_events_total` | `disk_errors` | `dev, error, rwbs, device_name, device_model` | 1 per row |
 | `rasdaemon_firmware_section_events_total` | `non_standard_event` | `sec_type, fru_id, fru_text, severity` | 1 per row |
 | `rasdaemon_hisi_oem_events_total` | `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2` | `record_type, version, soc_id, socket_id, nimbus_id, module_id, sub_module_id, err_severity` | 1 per row |
 | `rasdaemon_hisi_pcie_local_events_total` | `hip08_pcie_local_event_v2` | `version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | 1 per row |
@@ -85,11 +94,6 @@ These additional mappings are not implemented and are not available to scrape.
   little-endian layout of its first 4-, 2-, and 2-byte fields. `fru_text` is
   source text. `error_count` is not a weight; address and `cper_data` are not
   exported.
-- **`disk_errors`:** `dev`, `error`, and `rwbs` retain rasdaemon's stored
-  values; `error` is not remapped by this exporter. `device_name` and
-  `device_model` are best-effort current sysfs display values for `dev`, and
-  are `unknown` when lookup is unavailable. Sector, length, and command fields
-  are not exported.
 - **`non_standard_event`:** `sec_type` and `fru_id` are GUIDs rendered with
   the same standard byte layout as `extlog_event`; unknown GUIDs remain
   distinct. `fru_text` and `severity` retain source text. The binary `error`

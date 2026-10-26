@@ -24,6 +24,7 @@ type AERLabels struct {
 }
 
 // AERCollector stores the consumed cursor and cumulative aer_event counts.
+// Register construction supplies DeviceResolver before collection starts.
 // Serialize collection and field access.
 type AERCollector struct {
 	LastID         int64
@@ -113,9 +114,6 @@ func (c *AERCollector) CollectBatch(ctx context.Context, db *sql.DB, limit int) 
 	}
 	if len(records) == 0 {
 		return 0, nil
-	}
-	if c.DeviceResolver == nil {
-		c.DeviceResolver = newHostAERDeviceResolver()
 	}
 	delta := make(map[AERLabels]uint64)
 	for _, record := range records {
@@ -275,12 +273,6 @@ func (r *AERDeviceResolver) Resolve(timestamp, bdf string) string {
 		return vendorName + " " + name
 	}
 	return name
-}
-
-// newHostAERDeviceResolver captures kernel boot time once per collector; a
-// failed read leaves the resolver fail-closed, so no stale row is misnamed.
-func newHostAERDeviceResolver() *AERDeviceResolver {
-	return &AERDeviceResolver{BootTime: readKernelBootTime()}
 }
 
 // readKernelBootTime reads the kernel's boot epoch without querying PCI config.
