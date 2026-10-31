@@ -58,7 +58,8 @@ sudo ./build/rasdaemon-exporter
 
 The process collects immediately, then waits the configured interval after
 each completed round. It updates the snapshot when it consumes new records; an
-idle collector leaves the `.prom` and state files unchanged. Use either a
+idle collector leaves the event snapshot and state unchanged while refreshing
+the separate health file. Use either a
 foreground process or the systemd service, not both with the same state
 directory.
 
@@ -70,6 +71,11 @@ directory.
 | `--state-dir PATH`    | `/var/lib/rasdaemon-exporter`                              | Private collector state directory.                           |
 | `--output PATH`       | `/var/lib/node_exporter/textfile_collector/rasdaemon.prom` | Prometheus textfile output. Its parent directory must exist. |
 | `--interval DURATION` | `5s`                                                       | Delay after a completed collection round; must be positive.  |
+
+Health metrics default to
+`/var/lib/node_exporter/textfile_collector/rasdaemon.health.prom`.
+The path is derived from `--output`: a trailing `.prom` is replaced with
+`.health.prom`; otherwise `.health.prom` is appended. No extra option is needed.
 
 Run `rasdaemon-exporter --help` for the command-line summary. For custom paths
 or intervals, pass the corresponding options to the executable and update the
@@ -114,16 +120,6 @@ sudo journalctl -u rasdaemon-exporter.service -n 30 --no-pager
 Stop a foreground instance before starting the service. Stop the service before
 replacing its binary. Do not delete the state files to troubleshoot or reset
 the collector; they preserve restart continuity.
-
-## Roadmap
-
-The following collector metrics are planned, but are not currently
-implemented. No implementation order or release date is committed.
-
-- Collector health and operational metrics, including polling status and
-  duration, backlog, database size, and exported series count.
-
-See [METRICS.md](METRICS.md) for the planned metric names and mappings.
 
 ## Documentation
 

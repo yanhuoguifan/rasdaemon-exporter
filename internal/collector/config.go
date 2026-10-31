@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -16,6 +17,8 @@ const DefaultStateDir = "/var/lib/rasdaemon-exporter"
 // DefaultSnapshotPath is the textfile collector output location.
 const DefaultSnapshotPath = "/var/lib/node_exporter/textfile_collector/rasdaemon.prom"
 
+const healthSnapshotSuffix = ".health.prom"
+
 // DefaultInterval is the delay between completed collection rounds.
 const DefaultInterval = 5 * time.Second
 
@@ -25,6 +28,13 @@ type Config struct {
 	StateDir     string
 	SnapshotPath string
 	Interval     time.Duration
+}
+
+// HealthPath returns the separate health textfile path derived from SnapshotPath.
+func (c Config) HealthPath() string {
+	path := filepath.Clean(c.SnapshotPath)
+	path = strings.TrimSuffix(path, ".prom")
+	return path + healthSnapshotSuffix
 }
 
 // DefaultConfig returns settings for the standard rasdaemon installation.
@@ -73,13 +83,15 @@ func (c Config) Validate() error {
 		filepath.Join(cleanStateDir, stateFileName),
 		filepath.Join(cleanStateDir, "collector.lock"),
 	}
-	for _, outputPath := range [...]string{cleanSnapshotPath, cleanSnapshotPath + ".prev"} {
+	cleanHealthPath := c.HealthPath()
+	outputPaths := [...]string{cleanSnapshotPath, cleanSnapshotPath + ".prev", cleanHealthPath}
+	for _, outputPath := range outputPaths {
 		if outputPath == source {
-			return errors.New("metrics snapshot and backup paths must differ from the database")
+			return errors.New("metrics output paths must differ from the database")
 		}
 		for _, statePath := range stateFiles {
 			if outputPath == statePath {
-				return errors.New("metrics snapshot and backup paths must differ from the state files")
+				return errors.New("metrics output paths must differ from the state files")
 			}
 		}
 	}

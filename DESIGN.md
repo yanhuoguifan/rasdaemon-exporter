@@ -22,8 +22,8 @@ comments. Git history records why behavior changed.
   committing its matching state, allowing interrupted commits to recover.
 - Fail on unrecoverable data or persistence errors rather than silently
   resetting counters. Never automatically delete the source database or state.
-- Poll serially. When no cursor advances, leave the snapshot and state unchanged.
-  File age alone therefore does not indicate collector health.
+- Poll serially. When no cursor advances, leave the event snapshot and state
+  unchanged; publish collection health separately.
 - Keep deployment and process supervision separate from collection. No HTTP
   endpoint is needed: node-exporter exposes the generated textfile.
 

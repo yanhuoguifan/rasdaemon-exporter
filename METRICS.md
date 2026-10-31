@@ -1,8 +1,6 @@
 # Metrics
 
-This document describes the metric contract. All event counters listed below
-are implemented. The six collector gauges remain planned and are not currently
-available to scrape.
+This document describes the exported event counters and collector gauges.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
 distinct physical failure, and these metrics do not infer root cause. The
@@ -127,24 +125,14 @@ or missing BDFs remain in `pcie_info` while the name becomes `unknown`.
 - Snapshot counters are exact through `2^53`, inclusive; larger values are
   rejected because Prometheus snapshot values use floating-point numbers.
 
-## Collector gauges (planned; not emitted)
+## Collector gauges
 
-The following six gauges are part of the planned contract, but none is emitted
-by the current implementation. Their publication cadence, particularly while
-the database has no new rows, is not yet specified.
+Both gauges describe the whole collector, without per-table or exporter-added node labels.
 
-| Metric | Labels | Intended value |
+| Metric | Labels | Value |
 |---|---|---|
-| `rasdaemon_query_duration_seconds` | `table` | Duration of the most recent table polling attempt, in seconds |
-| `rasdaemon_query_success` | `table` | `1` after a successful poll and any required commit; `0` after failure or before the first success |
-| `rasdaemon_query_last_success_timestamp_seconds` | `table` | Unix timestamp of the last successful poll; `0` if none |
-| `rasdaemon_database_size_bytes` | none | Logical size of the SQLite main database file |
-| `rasdaemon_series_count` | none | Distinct hardware counter samples in the output snapshot; excludes gauges |
-| `rasdaemon_backlog_records_lower_bound` | `table` | Pending-row count: exact from 0–1000, with `1001` meaning at least 1001 |
-
-The backlog value is a bounded row count after the table cursor, not an ID
-difference. Node-exporter already reports filesystem capacity, so this exporter
-does not plan to duplicate filesystem-free-space metrics.
+| `rasdaemon_collection_last_success_timestamp_seconds` | none | Unix timestamp in seconds when the latest complete collection round succeeded |
+| `rasdaemon_series_count` | none | Number of hardware counter series in the event snapshot confirmed by that successful round; excludes collector gauges |
 
 ## Upstream references
 

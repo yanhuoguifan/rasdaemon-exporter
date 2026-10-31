@@ -25,8 +25,10 @@ type Engine struct {
 	databasePath string
 	stateDir     string
 	snapshotPath string
+	healthPath   string
 	tables       []tableEntry
 	committed    *State
+	seriesCount  uint64
 	closed       bool
 }
 
@@ -71,6 +73,7 @@ func OpenEngine(ctx context.Context, cfg Config) (_ *Engine, openErr error) {
 		databasePath: cfg.DatabasePath,
 		stateDir:     stateDir,
 		snapshotPath: filepath.Clean(cfg.SnapshotPath),
+		healthPath:   cfg.HealthPath(),
 		tables:       entries,
 	}, nil
 }
@@ -147,6 +150,7 @@ func (e *Engine) Restore(ctx context.Context) (restoreErr error) {
 			}
 		}
 		e.committed = state
+		e.seriesCount = snapshotSeriesCount(candidate)
 		removeRegularFile(e.snapshotBackupPath())
 		return nil
 	}
@@ -213,6 +217,7 @@ func (e *Engine) initialize(snapshotMissing bool) error {
 		return err
 	}
 	e.committed = state
+	e.seriesCount = 0
 	removeRegularFile(e.snapshotBackupPath())
 	return nil
 }
@@ -257,14 +262,16 @@ func (e *Engine) CollectAndCommit(ctx context.Context) (collectErr error) {
 			break
 		}
 	}
-	if !advanced {
-		return nil
+	if advanced {
+		candidate, err := e.committed.Advance(cursors)
+		if err != nil {
+			return err
+		}
+		if err := e.commit(candidate); err != nil {
+			return err
+		}
 	}
-	candidate, err := e.committed.Advance(cursors)
-	if err != nil {
-		return err
-	}
-	return e.commit(candidate)
+	return SaveHealth(e.healthPath, Health{LastSuccess: time.Now(), SeriesCount: e.seriesCount})
 }
 
 // commit writes the previous metrics generation, the next metrics generation,
@@ -294,8 +301,18 @@ func (e *Engine) commit(candidate *State) error {
 		return err
 	}
 	e.committed = candidate
+	e.seriesCount = snapshotSeriesCount(snapshot)
 	removeRegularFile(e.snapshotBackupPath())
 	return nil
+}
+
+// snapshotSeriesCount counts exported event samples, including zero-valued samples.
+func snapshotSeriesCount(snapshot *Snapshot) uint64 {
+	var count uint64
+	for _, family := range snapshot.Families {
+		count += uint64(len(family.Samples))
+	}
+	return count
 }
 
 func (e *Engine) snapshotBackupPath() string {

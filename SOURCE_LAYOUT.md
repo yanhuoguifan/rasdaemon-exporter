@@ -20,6 +20,7 @@
 │   ├── table_hisi_common_section_v2.go
 │   ├── table_hip08_oem_event_v2.go
 │   ├── metrics.go
+│   ├── health.go
 │   ├── state.go
 │   └── files.go
 ├── tests/
