@@ -31,12 +31,14 @@ func newTableEntries(discovered []string) []tableEntry {
 	diskErrors := &DiskErrorCollector{
 		DeviceResolver: &DiskDeviceResolver{BootTime: bootTime},
 	}
+	extlog := &ExtlogCollector{}
 	registered := []tableEntry{
 		{Name: "devlink_event", Cursor: &devlink.LastID, Collector: devlink},
 		{Name: "mc_event", Cursor: &mc.LastID, Collector: mc},
 		{Name: "mce_record", Cursor: &mce.LastID, Collector: mce},
 		{Name: "aer_event", Cursor: &aer.LastID, Collector: aer},
 		{Name: "disk_errors", Cursor: &diskErrors.LastID, Collector: diskErrors},
+		{Name: "extlog_event", Cursor: &extlog.LastID, Collector: extlog},
 	}
 	var entries []tableEntry
 	for _, table := range registered {

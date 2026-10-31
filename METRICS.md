@@ -1,7 +1,7 @@
 # Metrics
 
 This document describes the metric contract. The devlink, AER, block I/O, MCE,
-and two MC counters are implemented. The other six event counters and six
+extlog, and two MC counters are implemented. The other five event counters and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -32,6 +32,7 @@ not emitted as zero.
 | `rasdaemon_pcie_aer_events_total` | `aer_event` | `dev_name, err_type, err_msg, device_name` | 1 per row |
 | `rasdaemon_block_io_error_events_total` | `disk_errors` | `dev, error, rwbs, device_name, device_model` | 1 per row |
 | `rasdaemon_mce_events_total` | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | 1 per row |
+| `rasdaemon_extlog_memory_events_total` | `extlog_event` | `etype, severity, fru_id, fru_text` | 1 per row; not `error_count` |
 
 For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
 before grouping.
@@ -73,6 +74,12 @@ Message fields replace invalid UTF-8 runs with `<invalid>`. `error_msg`,
 values, syndrome numbers, and dynamic `n_errors` values. Register dumps are not
 selected; each row adds one regardless of any count mentioned in its messages.
 
+For extlog, `etype` and `severity` use decimal text, including negative values.
+`fru_id` uses GUID formatting with little-endian 4-, 2-, and 2-byte fields;
+NULL becomes empty, all-zero GUIDs remain explicit, and other lengths are
+rejected. `fru_text` retains source text except invalid UTF-8 runs become
+`<invalid>`. `error_count` is not a weight; address and `cper_data` are excluded.
+
 ## Planned event counters
 
 These additional mappings are not implemented and are not available to scrape.
@@ -80,7 +87,6 @@ These additional mappings are not implemented and are not available to scrape.
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
-| `rasdaemon_firmware_memory_events_total` | `extlog_event` | `etype, severity, fru_id, fru_text` | 1 per row; not `error_count` |
 | `rasdaemon_firmware_section_events_total` | `non_standard_event` | `sec_type, fru_id, fru_text, severity` | 1 per row |
 | `rasdaemon_hisi_oem_events_total` | `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2` | `record_type, version, soc_id, socket_id, nimbus_id, module_id, sub_module_id, err_severity` | 1 per row |
 | `rasdaemon_hisi_pcie_local_events_total` | `hip08_pcie_local_event_v2` | `version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | 1 per row |
@@ -93,11 +99,6 @@ These additional mappings are not implemented and are not available to scrape.
   signed decimal values (including `-1`), not health gauges. `error_count` is
   not a weight. `affinity` is decimal text, with a
   missing or negative value represented as `unknown`.
-- **`extlog_event`:** integer `etype` and `severity` values are decimal text;
-  `etype=-1` is retained. `fru_id` is rendered as a GUID using the standard
-  little-endian layout of its first 4-, 2-, and 2-byte fields. `fru_text` is
-  source text. `error_count` is not a weight; address and `cper_data` are not
-  exported.
 - **`non_standard_event`:** `sec_type` and `fru_id` are GUIDs rendered with
   the same standard byte layout as `extlog_event`; unknown GUIDs remain
   distinct. `fru_text` and `severity` retain source text. The binary `error`
