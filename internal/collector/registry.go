@@ -35,6 +35,8 @@ func newTableEntries(discovered []string) []tableEntry {
 	extlog := &ExtlogCollector{}
 	nonStandard := &NonStandardCollector{}
 	hip08PCIeLocal := &HIP08PCIeLocalCollector{}
+	oemType1 := NewHIP08OEMType1Collector()
+	oemType2 := NewHIP08OEMType2Collector()
 	hisiCommon := &HisiCommonCollector{
 		DeviceResolver: &AERDeviceResolver{BootTime: bootTime},
 	}
@@ -49,6 +51,8 @@ func newTableEntries(discovered []string) []tableEntry {
 		{Name: "non_standard_event", Cursor: &nonStandard.LastID, Collector: nonStandard},
 		{Name: "hip08_pcie_local_event_v2", Cursor: &hip08PCIeLocal.LastID, Collector: hip08PCIeLocal},
 		{Name: "hisi_common_section_v2", Cursor: &hisiCommon.LastID, Collector: hisiCommon},
+		{Name: hip08OEMType1Table, Cursor: &oemType1.LastID, Collector: oemType1},
+		{Name: hip08OEMType2Table, Cursor: &oemType2.LastID, Collector: oemType2},
 	}
 	var entries []tableEntry
 	for _, table := range registered {

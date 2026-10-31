@@ -6,7 +6,8 @@ collector. It does not expose an HTTP endpoint.
 
 The current collector supports `devlink_event`, `mc_event`, `aer_event`,
 `disk_errors`, `mce_record`, `extlog_event`, `non_standard_event`, `arm_event`,
-`hip08_pcie_local_event_v2`, and `hisi_common_section_v2`.
+`hip08_pcie_local_event_v2`, `hisi_common_section_v2`,
+`hip08_oem_type1_event_v2`, and `hip08_oem_type2_event_v2`.
 Other rasdaemon event tables are not exported yet. The collector is designed against the
 upstream rasdaemon v0.8.4 schema; other versions are best-effort when their
 database fields match.
@@ -116,10 +117,9 @@ the collector; they preserve restart continuity.
 
 ## Roadmap
 
-The following sources and collector metrics are planned, but are not currently
+The following collector metrics are planned, but are not currently
 implemented. No implementation order or release date is committed.
 
-- `hip08_oem_type1_event_v2` and `hip08_oem_type2_event_v2`: HiSilicon OEM records.
 - Collector health and operational metrics, including polling status and
   duration, backlog, database size, and exported series count.
 
