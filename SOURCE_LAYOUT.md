@@ -14,6 +14,7 @@
 │   ├── table_disk_errors.go
 │   ├── table_mce_record.go
 │   ├── table_extlog_event.go
+│   ├── table_non_standard_event.go
 │   ├── metrics.go
 │   ├── state.go
 │   └── files.go

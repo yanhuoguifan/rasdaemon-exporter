@@ -151,9 +151,9 @@ func readExtlogBatch(ctx context.Context, db *sql.DB, afterID int64, limit int) 
 		if id <= lastID {
 			return extlogBatch{}, fmt.Errorf("extlog_event IDs are not strictly increasing: %d after %d", id, lastID)
 		}
-		guid, err := extlogGUID(fruID)
+		guid, err := formatGUID(fruID)
 		if err != nil {
-			return extlogBatch{}, fmt.Errorf("extlog_event ID %d: %w", id, err)
+			return extlogBatch{}, fmt.Errorf("extlog_event ID %d fru_id: %w", id, err)
 		}
 		labels := ExtlogLabels{
 			EType:    extlogDecimal(etype),
@@ -185,14 +185,14 @@ func extlogDecimal(value sql.NullInt64) string {
 	return fmt.Sprintf("%d", value.Int64)
 }
 
-// extlogGUID formats the first 4/2/2 bytes as little-endian GUID fields.
+// formatGUID formats the first 4/2/2 bytes as little-endian GUID fields.
 // 33221100554477668899aabbccddeeff becomes 00112233-4455-6677-8899-aabbccddeeff.
-func extlogGUID(value sql.Null[[]byte]) (string, error) {
+func formatGUID(value sql.Null[[]byte]) (string, error) {
 	if !value.Valid {
 		return "", nil
 	}
 	if len(value.V) != 16 {
-		return "", fmt.Errorf("fru_id must be 16 bytes, got %d", len(value.V))
+		return "", fmt.Errorf("GUID must be 16 bytes, got %d", len(value.V))
 	}
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		binary.LittleEndian.Uint32(value.V[0:4]),
