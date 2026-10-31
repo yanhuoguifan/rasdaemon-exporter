@@ -16,6 +16,7 @@
 │   ├── table_extlog_event.go
 │   ├── table_non_standard_event.go
 │   ├── table_arm_event.go
+│   ├── table_hip08_pcie_local_event_v2.go
 │   ├── metrics.go
 │   ├── state.go
 │   └── files.go

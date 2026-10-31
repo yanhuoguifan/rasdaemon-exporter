@@ -1,8 +1,8 @@
 # Metrics
 
 This document describes the metric contract. The devlink, AER, block I/O, MCE,
-extlog, non-standard firmware, ARM, and two MC counters are implemented. The other
-three event counters and six
+extlog, non-standard firmware, ARM, HIP08 PCIe local, and two MC counters are
+implemented. The other two event counters and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -36,6 +36,7 @@ not emitted as zero.
 | `rasdaemon_extlog_memory_events_total` | `extlog_event` | `etype, severity, fru_id, fru_text` | 1 per row; not `error_count` |
 | `rasdaemon_non_standard_events_total` | `non_standard_event` | `sec_type, fru_id, fru_text, severity` | 1 per row |
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
+| `rasdaemon_hisi_pcie_local_events_total` | `hip08_pcie_local_event_v2` | `version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | 1 per row |
 
 For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
 before grouping.
@@ -97,6 +98,12 @@ rasdaemon's text, without decoding, sorting, or reclassification. The state
 fields are not health gauges, and `error_count` is not a weight. Raw context,
 vendor data, and fault addresses are not queried or exported.
 
+For HIP08 PCIe local reports, non-negative `err_type` uses lowercase hexadecimal
+with an `0x` prefix and no padding; negative values remain signed decimal.
+Other integer labels use decimal text and NULL becomes empty. `sub_module_id`
+and `err_severity` retain rasdaemon's text. `version` is a label, not a parser
+switch; no error decoding or register-dump export is performed.
+
 ## Planned event counters
 
 These additional mappings are not implemented and are not available to scrape.
@@ -104,12 +111,11 @@ These additional mappings are not implemented and are not available to scrape.
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
 | `rasdaemon_hisi_oem_events_total` | `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2` | `record_type, version, soc_id, socket_id, nimbus_id, module_id, sub_module_id, err_severity` | 1 per row |
-| `rasdaemon_hisi_pcie_local_events_total` | `hip08_pcie_local_event_v2` | `version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | 1 per row |
 | `rasdaemon_hisi_common_events_total` | `hisi_common_section_v2` | `version, soc_id, socket_id, totem_id, nimbus_id, sub_system_id, module_id, sub_module_id, core_id, port_id, err_type, pcie_info, err_severity` | 1 per row |
 
 ### Label mappings
 
-- **HiSilicon/HIP08 tables:** source integer fields are decimal text and source
+- **Planned HiSilicon/HIP08 tables:** source integer fields are decimal text and source
   text is retained; values are not decoded into a new taxonomy. The two OEM
   tables share one metric family and use `record_type="type1"` or `"type2"`
   to distinguish the source table. `version` is a label, not a parser switch.
