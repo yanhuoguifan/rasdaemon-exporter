@@ -12,6 +12,7 @@
 │   ├── table_mc_event.go
 │   ├── table_aer_event.go
 │   ├── table_disk_errors.go
+│   ├── table_mce_record.go
 │   ├── metrics.go
 │   ├── state.go
 │   └── files.go

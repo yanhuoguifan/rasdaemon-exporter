@@ -1,7 +1,7 @@
 # Metrics
 
-This document describes the metric contract. The devlink, AER, block I/O, and two MC
-counters are implemented. The other seven event counters and six
+This document describes the metric contract. The devlink, AER, block I/O, MCE,
+and two MC counters are implemented. The other six event counters and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -31,6 +31,7 @@ not emitted as zero.
 | `rasdaemon_memory_events_total` | `mc_event` | `error_type, mc, top_layer, middle_layer, lower_layer, dimm, err_msg` | 1 per row |
 | `rasdaemon_pcie_aer_events_total` | `aer_event` | `dev_name, err_type, err_msg, device_name` | 1 per row |
 | `rasdaemon_block_io_error_events_total` | `disk_errors` | `dev, error, rwbs, device_name, device_model` | 1 per row |
+| `rasdaemon_mce_events_total` | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | 1 per row |
 
 For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
 before grouping.
@@ -64,13 +65,20 @@ Logical devices are not traced through their backing disks. No device nodes
 are opened or hardware commands issued. Sector, length, and command fields
 are not exported.
 
+For MCE, `cpuid` uses lowercase hexadecimal with `0x` and at least eight digits;
+`cpuvendor`, `socketid`, `cpu`, and `bank` use decimal text. Negative values stay
+decimal and NULL becomes empty; no vendor or CPUID decoding is performed.
+Message fields replace invalid UTF-8 runs with `<invalid>`. `error_msg`,
+`mcastatus_msg`, and `mc_location` omit labeled internal addresses, row/column
+values, syndrome numbers, and dynamic `n_errors` values. Register dumps are not
+selected; each row adds one regardless of any count mentioned in its messages.
+
 ## Planned event counters
 
 These additional mappings are not implemented and are not available to scrape.
 
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
-| `rasdaemon_mce_events_total` | `mce_record` | `cpuvendor, cpuid, socketid, cpu, bank, bank_name, error_msg, mcistatus_msg, mcastatus_msg, mc_location` | 1 per row |
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
 | `rasdaemon_firmware_memory_events_total` | `extlog_event` | `etype, severity, fru_id, fru_text` | 1 per row; not `error_count` |
 | `rasdaemon_firmware_section_events_total` | `non_standard_event` | `sec_type, fru_id, fru_text, severity` | 1 per row |
@@ -80,10 +88,6 @@ These additional mappings are not implemented and are not available to scrape.
 
 ### Label mappings
 
-- **`mce_record`:** source integer fields use decimal text, not decoded vendor
-  names or a new fault taxonomy. `error_msg`, `mcastatus_msg`, and `mc_location`
-  omit internal addresses, row/column values, syndrome numbers, and dynamic
-  `n_errors` values. Register dumps are excluded; `n_errors` is not a weight.
 - **`arm_event`:** `mpidr`, `error_type`, and `error_flags` are not decoded into
   topology or a new classification. `running_state` and `psci_state` are
   signed decimal values (including `-1`), not health gauges. `error_count` is
