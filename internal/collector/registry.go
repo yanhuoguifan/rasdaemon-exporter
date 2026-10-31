@@ -23,6 +23,7 @@ type tableEntry struct {
 func newTableEntries(discovered []string) []tableEntry {
 	devlink := &DevlinkCollector{}
 	mc := &MCCollector{}
+	arm := &ARMCollector{}
 	mce := &MCECollector{}
 	bootTime := readKernelBootTime()
 	aer := &AERCollector{
@@ -36,6 +37,7 @@ func newTableEntries(discovered []string) []tableEntry {
 	registered := []tableEntry{
 		{Name: "devlink_event", Cursor: &devlink.LastID, Collector: devlink},
 		{Name: "mc_event", Cursor: &mc.LastID, Collector: mc},
+		{Name: "arm_event", Cursor: &arm.LastID, Collector: arm},
 		{Name: "mce_record", Cursor: &mce.LastID, Collector: mce},
 		{Name: "aer_event", Cursor: &aer.LastID, Collector: aer},
 		{Name: "disk_errors", Cursor: &diskErrors.LastID, Collector: diskErrors},

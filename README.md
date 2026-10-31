@@ -5,7 +5,7 @@ and writes cumulative Prometheus metrics for node_exporter's textfile
 collector. It does not expose an HTTP endpoint.
 
 The current collector supports `devlink_event`, `mc_event`, `aer_event`,
-`disk_errors`, `mce_record`, `extlog_event`, and `non_standard_event`.
+`disk_errors`, `mce_record`, `extlog_event`, `non_standard_event`, and `arm_event`.
 Other rasdaemon event tables are not exported yet. The collector is designed against the
 upstream rasdaemon v0.8.4 schema; other versions are best-effort when their
 database fields match.
@@ -117,7 +117,6 @@ the collector; they preserve restart continuity.
 The following sources and collector metrics are planned, but are not currently
 implemented. No implementation order or release date is committed.
 
-- `arm_event`: ARM processor events.
 - `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2`,
   `hip08_pcie_local_event_v2`, and `hisi_common_section_v2`: HiSilicon-specific
   records.
