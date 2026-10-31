@@ -36,9 +36,11 @@ distribution's service configuration; do not launch a second rasdaemon process.
 ```sh
 make build
 make test
+./build/rasdaemon-exporter --version
 ```
 
 The executable is `build/rasdaemon-exporter`. `make clean` removes that binary.
+The release version is defined in the Makefile; a direct `go build` uses `dev`.
 `make install` installs a previously built binary and the systemd unit; it does
 not build, enable, or start the service:
 
@@ -71,6 +73,7 @@ directory.
 | `--state-dir PATH`    | `/var/lib/rasdaemon-exporter`                              | Private collector state directory.                           |
 | `--output PATH`       | `/var/lib/node_exporter/textfile_collector/rasdaemon.prom` | Prometheus textfile output. Its parent directory must exist. |
 | `--interval DURATION` | `5s`                                                       | Delay after a completed collection round; must be positive.  |
+| `--version` | — | Print the version and exit. |
 
 Health metrics default to
 `/var/lib/node_exporter/textfile_collector/rasdaemon.health.prom`.

@@ -25,6 +25,7 @@ func TestCLIHelpDoesNotNeedTheHostDatabase(t *testing.T) {
 		"--state-dir", collector.DefaultStateDir,
 		"--output", collector.DefaultSnapshotPath,
 		"--interval", "5s",
+		"--version",
 	} {
 		if !strings.Contains(strings.ToLower(output), strings.ToLower(expected)) {
 			t.Errorf("--help output does not contain %q:\n%s", expected, output)

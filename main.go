@@ -14,18 +14,27 @@ import (
 	"rasdaemon-exporter/internal/collector"
 )
 
+var version = "dev"
+
 func main() {
 	// Keep os.Exit outside run so connection and signal cleanup can finish.
-	os.Exit(run(os.Args[1:], os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stderr io.Writer) int {
-	cfg, err := parseConfig(args, stderr)
+func run(args []string, stdout, stderr io.Writer) int {
+	cfg, showVersion, err := parseConfig(args, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
+	}
+	if showVersion {
+		if _, err := fmt.Fprintf(stdout, "rasdaemon-exporter %s\n", version); err != nil {
+			fmt.Fprintf(stderr, "rasdaemon-exporter: write version: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	// Help and invalid arguments never open the source database. Signals cancel
@@ -68,10 +77,11 @@ func onlyContextCanceled(err error) bool {
 
 // parseConfig owns CLI diagnostics, including flag's help/error output.
 // Callers use the returned error for exit status and must not print it again.
-func parseConfig(args []string, stderr io.Writer) (collector.Config, error) {
+func parseConfig(args []string, stderr io.Writer) (collector.Config, bool, error) {
 	cfg := collector.DefaultConfig()
 	flags := flag.NewFlagSet("rasdaemon-exporter", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	showVersion := flags.Bool("version", false, "print version and exit")
 	flags.StringVar(&cfg.DatabasePath, "db", cfg.DatabasePath,
 		"absolute path to an existing rasdaemon SQLite database (read-only)")
 	flags.StringVar(&cfg.StateDir, "state-dir", cfg.StateDir,
@@ -81,21 +91,24 @@ func parseConfig(args []string, stderr io.Writer) (collector.Config, error) {
 	flags.DurationVar(&cfg.Interval, "interval", cfg.Interval,
 		"delay between completed collection rounds")
 	flags.Usage = func() {
-		fmt.Fprintln(stderr, "Usage: rasdaemon-exporter [--db PATH] [--state-dir PATH] [--output PATH] [--interval DURATION]")
+		fmt.Fprintln(stderr, "Usage: rasdaemon-exporter [--version] [--db PATH] [--state-dir PATH] [--output PATH] [--interval DURATION]")
 		fmt.Fprintln(stderr, "Collects rasdaemon events and publishes Prometheus textfile metrics.")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
-		return collector.Config{}, err
+		return collector.Config{}, false, err
 	}
 	if flags.NArg() != 0 {
 		err := errors.New("unexpected positional arguments; use --db PATH")
 		fmt.Fprintf(stderr, "rasdaemon-exporter: %v\n", err)
-		return collector.Config{}, err
+		return collector.Config{}, false, err
+	}
+	if *showVersion {
+		return cfg, true, nil
 	}
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(stderr, "rasdaemon-exporter: configuration: %v\n", err)
-		return collector.Config{}, err
+		return collector.Config{}, false, err
 	}
-	return cfg, nil
+	return cfg, false, nil
 }
