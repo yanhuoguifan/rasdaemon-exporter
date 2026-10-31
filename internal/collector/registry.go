@@ -35,6 +35,9 @@ func newTableEntries(discovered []string) []tableEntry {
 	extlog := &ExtlogCollector{}
 	nonStandard := &NonStandardCollector{}
 	hip08PCIeLocal := &HIP08PCIeLocalCollector{}
+	hisiCommon := &HisiCommonCollector{
+		DeviceResolver: &AERDeviceResolver{BootTime: bootTime},
+	}
 	registered := []tableEntry{
 		{Name: "devlink_event", Cursor: &devlink.LastID, Collector: devlink},
 		{Name: "mc_event", Cursor: &mc.LastID, Collector: mc},
@@ -45,6 +48,7 @@ func newTableEntries(discovered []string) []tableEntry {
 		{Name: "extlog_event", Cursor: &extlog.LastID, Collector: extlog},
 		{Name: "non_standard_event", Cursor: &nonStandard.LastID, Collector: nonStandard},
 		{Name: "hip08_pcie_local_event_v2", Cursor: &hip08PCIeLocal.LastID, Collector: hip08PCIeLocal},
+		{Name: "hisi_common_section_v2", Cursor: &hisiCommon.LastID, Collector: hisiCommon},
 	}
 	var entries []tableEntry
 	for _, table := range registered {

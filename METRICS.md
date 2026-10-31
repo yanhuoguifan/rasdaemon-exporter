@@ -1,8 +1,8 @@
 # Metrics
 
 This document describes the metric contract. The devlink, AER, block I/O, MCE,
-extlog, non-standard firmware, ARM, HIP08 PCIe local, and two MC counters are
-implemented. The other two event counters and six
+extlog, non-standard firmware, ARM, HIP08 PCIe local, HiSilicon common, and two MC
+counters are implemented. The remaining OEM event counter and six
 collector gauges below are planned; they are not currently available to scrape.
 
 The exporter reports rasdaemon database records. A record is not necessarily a
@@ -37,6 +37,7 @@ not emitted as zero.
 | `rasdaemon_non_standard_events_total` | `non_standard_event` | `sec_type, fru_id, fru_text, severity` | 1 per row |
 | `rasdaemon_arm_processor_events_total` | `arm_event` | `mpidr, affinity, error_type, error_flags, running_state, psci_state` | 1 per row |
 | `rasdaemon_hisi_pcie_local_events_total` | `hip08_pcie_local_event_v2` | `version, soc_id, socket_id, nimbus_id, sub_module_id, core_id, port_id, err_type, err_severity` | 1 per row |
+| `rasdaemon_hisi_common_events_total` | `hisi_common_section_v2` | `version, soc_id, socket_id, totem_id, nimbus_id, sub_system_id, module_id, sub_module_id, core_id, port_id, err_type, pcie_info, err_severity, device_name` | 1 per row |
 
 For devlink, each run of invalid UTF-8 bytes in `msg` is replaced by `<invalid>`
 before grouping.
@@ -104,6 +105,13 @@ Other integer labels use decimal text and NULL becomes empty. `sub_module_id`
 and `err_severity` retain rasdaemon's text. `version` is a label, not a parser
 switch; no error decoding or register-dump export is performed.
 
+For HiSilicon common reports, integer labels (including `err_type`) use decimal
+text, preserving negative values; NULL becomes empty. `module_id`, `pcie_info`,
+and `err_severity` retain source text. `device_name` uses the same uncached PCI
+lookup, boot-time eligibility, and snapshot-name preservation as AER; invalid
+or missing BDFs remain in `pcie_info` while the name becomes `unknown`.
+`version` is only a label. Register dumps are not queried or exported.
+
 ## Planned event counters
 
 These additional mappings are not implemented and are not available to scrape.
@@ -111,7 +119,6 @@ These additional mappings are not implemented and are not available to scrape.
 | Metric | Source | Exported labels | Counter increment |
 |---|---|---|---|
 | `rasdaemon_hisi_oem_events_total` | `hip08_oem_type1_event_v2`, `hip08_oem_type2_event_v2` | `record_type, version, soc_id, socket_id, nimbus_id, module_id, sub_module_id, err_severity` | 1 per row |
-| `rasdaemon_hisi_common_events_total` | `hisi_common_section_v2` | `version, soc_id, socket_id, totem_id, nimbus_id, sub_system_id, module_id, sub_module_id, core_id, port_id, err_type, pcie_info, err_severity` | 1 per row |
 
 ### Label mappings
 
