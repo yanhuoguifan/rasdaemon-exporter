@@ -3,13 +3,19 @@ GO ?= go
 VERSION = 0.1.0
 
 .DEFAULT_GOAL := build
-.PHONY: build clean test install
+.PHONY: build build-static clean test install
 
 build:
 	@test ! -L build || { echo "Refusing a symlinked build directory" >&2; exit 1; }
 	@mkdir -p build
 	@test ! -L build/rasdaemon-exporter || { echo "Refusing a symlinked output binary" >&2; exit 1; }
 	CGO_ENABLED=1 $(GO) build -ldflags "-X main.version=$(VERSION)" -o build/rasdaemon-exporter .
+
+build-static:
+	@test ! -L build || { echo "Refusing a symlinked build directory" >&2; exit 1; }
+	@mkdir -p build
+	@test ! -L build/rasdaemon-exporter || { echo "Refusing a symlinked output binary" >&2; exit 1; }
+	CGO_ENABLED=1 CC=musl-gcc GOOS=linux GOARCH=amd64 $(GO) build -tags 'netgo osusergo sqlite_omit_load_extension' -ldflags "-linkmode=external -extldflags=-static -X main.version=$(VERSION)" -o build/rasdaemon-exporter .
 
 # Remove only the owned binary, not arbitrary files or Go's shared caches.
 clean:
