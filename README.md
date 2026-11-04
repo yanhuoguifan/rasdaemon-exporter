@@ -43,6 +43,9 @@ Use `make build-static` instead of `make build` for a static Linux amd64 build
 (requires `musl-gcc`). Both targets write `build/rasdaemon-exporter`.
 `make clean` removes that binary.
 The release version is defined in the Makefile; a direct `go build` uses `dev`.
+`make dist` runs the static build and creates
+`dist/rasdaemon-exporter-<VERSION>-linux-amd64.tar.gz` and
+`dist/SHA256SUMS-<VERSION>`.
 `make install` installs a previously built binary and the systemd unit; it does
 not build, enable, or start the service:
 
