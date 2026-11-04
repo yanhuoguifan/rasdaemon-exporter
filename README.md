@@ -61,7 +61,7 @@ When upgrading, stop the service first and retain the database, state, and textf
 ```sh
 (
   set -eu
-  release_version=0.1.0 # Set to the package version.
+  release_version=1.0.0 # Set to the package version.
   sha256sum -c "SHA256SUMS-${release_version}"
   tar -xzf "rasdaemon-exporter-${release_version}-linux-amd64.tar.gz"
   cd "rasdaemon-exporter-${release_version}-linux-amd64"

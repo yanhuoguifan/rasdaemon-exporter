@@ -1,6 +1,6 @@
 # Keep Go responsible for dependency resolution and compilation.
 GO ?= go
-VERSION = 0.1.0
+VERSION = 1.0.0
 DIST_NAME = rasdaemon-exporter-$(VERSION)-linux-amd64
 
 .DEFAULT_GOAL := build
