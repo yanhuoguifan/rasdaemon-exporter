@@ -53,6 +53,25 @@ not build, enable, or start the service:
 sudo make install
 ```
 
+## Install from a release
+
+Use the archive and matching checksum from `make dist` or the same release.
+When upgrading, stop the service first and retain the database, state, and textfiles.
+
+```sh
+(
+  set -eu
+  release_version=0.1.0 # Set to the package version.
+  sha256sum -c "SHA256SUMS-${release_version}"
+  tar -xzf "rasdaemon-exporter-${release_version}-linux-amd64.tar.gz"
+  cd "rasdaemon-exporter-${release_version}-linux-amd64"
+  sudo install -Dm0755 rasdaemon-exporter /usr/local/bin/rasdaemon-exporter
+  sudo install -Dm0644 rasdaemon-exporter.service /etc/systemd/system/rasdaemon-exporter.service
+)
+```
+
+Then follow [systemd service](#systemd-service) to start the exporter.
+
 ## Run
 
 The default output directory must already exist. Create it if needed; do not
@@ -78,7 +97,7 @@ directory.
 | `--state-dir PATH`    | `/var/lib/rasdaemon-exporter`                              | Private collector state directory.                           |
 | `--output PATH`       | `/var/lib/node_exporter/textfile_collector/rasdaemon.prom` | Prometheus textfile output. Its parent directory must exist. |
 | `--interval DURATION` | `5s`                                                       | Delay after a completed collection round; must be positive.  |
-| `--version` | — | Print the version and exit. |
+| `--version`           | —                                                           | Print the version and exit.                                  |
 
 Health metrics default to
 `/var/lib/node_exporter/textfile_collector/rasdaemon.health.prom`.
@@ -114,11 +133,10 @@ modification time is not a collector heartbeat.
 ## systemd service
 
 The supplied service runs as root to read rasdaemon's private database directory.
-To install and start it after building:
+After installing from source or a release:
 
 ```sh
 sudo mkdir -p /var/lib/node_exporter/textfile_collector
-sudo make install
 sudo systemctl daemon-reload
 sudo systemctl enable --now rasdaemon-exporter.service
 sudo systemctl status rasdaemon-exporter.service --no-pager
